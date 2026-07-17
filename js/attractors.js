@@ -21,6 +21,7 @@ export function proponerAtractores(pois, maximo = 14) {
         candidatos.push({
           nombre: t.name || `(${regla.tipo} sin nombre)`,
           tipo: regla.tipo,
+          rol: "ambos", // origen | destino | ambos — lo ajusta el usuario
           peso: regla.peso,
           lon: poi.lon,
           lat: poi.lat,

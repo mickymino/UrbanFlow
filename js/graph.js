@@ -1,10 +1,11 @@
 // Grafo caminable: calles + red peatonal fusionadas (equivalente al paso 1 de flow_model.py).
-// Nodos por redondeo a 0.5 m; aristas = pares de vértices consecutivos; CSR + dijkstra con heap.
+// Nodos por redondeo a 0.5 m; aristas = pares de vértices consecutivos, con nombre de calle
+// (para KPIs y barreras); CSR + dijkstra con heap. nearestEdge para interacción en el mapa.
 
 export function construirGrafo(capasLineas, proyector) {
   const nodos = [];            // [x, y] en metros
   const indice = new Map();    // clave redondeada -> id de nodo
-  const aristas = [];          // {a, b, len}
+  const aristas = [];          // {a, b, len, nombre}
 
   function nodo(x, y) {
     const clave = (Math.round(x * 2)) + "," + (Math.round(y * 2));
@@ -19,6 +20,7 @@ export function construirGrafo(capasLineas, proyector) {
 
   for (const capa of capasLineas) {
     for (const linea of capa) {
+      const nombre = (linea.tags && (linea.tags.name || linea.tags.highway)) || "";
       let prev = null;
       for (const [lon, lat] of linea.coords) {
         const [x, y] = proyector.aXY(lon, lat);
@@ -26,7 +28,7 @@ export function construirGrafo(capasLineas, proyector) {
         if (prev !== null && prev !== id) {
           const [x1, y1] = nodos[prev];
           const len = Math.hypot(x - x1, y - y1);
-          if (len > 0.01) aristas.push({ a: prev, b: id, len });
+          if (len > 0.01) aristas.push({ a: prev, b: id, len, nombre });
         }
         prev = id;
       }
@@ -63,8 +65,24 @@ export function nodoMasCercano(grafo, x, y) {
   return { id: mejor, dist: Math.sqrt(mejorD) };
 }
 
+// arista más cercana a un punto (metros) — para bloquear tramos con clic en el mapa
+export function aristaMasCercana(grafo, x, y) {
+  let mejor = -1, mejorD = Infinity;
+  for (let e = 0; e < grafo.m; e++) {
+    const { a, b } = grafo.aristas[e];
+    const [x1, y1] = grafo.nodos[a], [x2, y2] = grafo.nodos[b];
+    const dx = x2 - x1, dy = y2 - y1;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 ? ((x - x1) * dx + (y - y1) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = x1 + t * dx, py = y1 + t * dy;
+    const d = (x - px) ** 2 + (y - py) ** 2;
+    if (d < mejorD) { mejorD = d; mejor = e; }
+  }
+  return { e: mejor, dist: Math.sqrt(mejorD) };
+}
+
 // Dijkstra con heap binario y costos por arista dados (Float64Array de tamaño m).
-// Devuelve {aristaPrevia, nodoPrevio} para reconstruir rutas.
 export function dijkstra(grafo, origen, costos) {
   const { n, offset, destino, idArista } = grafo;
   const dist = new Float64Array(n).fill(Infinity);
@@ -72,7 +90,6 @@ export function dijkstra(grafo, origen, costos) {
   const nodoPrevio = new Int32Array(n).fill(-1);
   dist[origen] = 0;
 
-  // heap binario: arrays paralelos (distancia, nodo), con entradas obsoletas descartadas
   const hd = [0], hn = [origen];
   const sube = (i) => {
     while (i > 0) {
@@ -100,7 +117,9 @@ export function dijkstra(grafo, origen, costos) {
     if (d > dist[u]) continue;
     for (let k = offset[u]; k < offset[u + 1]; k++) {
       const v = destino[k], e = idArista[k];
-      const nd = d + costos[e];
+      const c = costos[e];
+      if (!isFinite(c)) continue; // arista bloqueada (barrera)
+      const nd = d + c;
       if (nd < dist[v]) {
         dist[v] = nd;
         aristaPrevia[v] = e;
