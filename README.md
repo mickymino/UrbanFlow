@@ -1,10 +1,11 @@
-# CUF · Flujos Peatonales
+# UrbanFlow
 
-Motor de análisis urbano computacional en el navegador. Parte del
-**Computational Urbanism Framework (CUF)** de Miguel — extensión del ecosistema de
-skills de [Abhinav BWJ](https://github.com/Amanbh997).
+Motor de análisis urbano computacional en el navegador: simulación de flujos
+peatonales de cualquier ciudad del mundo. Parte del **Computational Urbanism
+Framework (CUF)** de Miguel — extensión del ecosistema de skills de
+[Abhinav BWJ](https://github.com/Amanbh997).
 
-**Demo pública:** https://mickymino.github.io/cuf-flujos-peatonales/
+**Demo pública:** https://mickymino.github.io/UrbanFlow/
 
 ## Qué hace
 
