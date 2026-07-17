@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CUF · Flujos Peatonales — motor de análisis urbano</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <header>
+      <h1>FLUJOS PEATONALES</h1>
+      <p class="sub">Computational Urbanism Framework · motor proxy OD</p>
+      <div class="chips">
+        <span class="chip" style="background:#F0E8D8" title="#F0E8D8"></span>
+        <span class="chip" style="background:#D4A530" title="#D4A530"></span>
+        <span class="chip" style="background:#C25E35" title="#C25E35"></span>
+        <span class="chip" style="background:#9E2B25" title="#9E2B25"></span>
+      </div>
+    </header>
+
+    <section class="step" id="step-ciudad">
+      <h2><span class="n">1</span> Ciudad</h2>
+      <div class="row">
+        <input id="busqueda" type="text" placeholder="Buscar ciudad… (ej. Cuenca, Ecuador)" autocomplete="off">
+        <button id="btn-buscar">Buscar</button>
+      </div>
+      <ul id="resultados"></ul>
+      <button id="btn-demo" class="ghost">★ Cargar caso validado: Centro Histórico de Guayaquil</button>
+      <div id="ciudad-actual" class="pill oculto"></div>
+    </section>
+
+    <section class="step deshabilitado" id="step-area">
+      <h2><span class="n">2</span> Área de estudio</h2>
+      <label>Lado del área: <span id="lado-val">1500</span> m
+        <input id="lado" type="range" min="500" max="3400" step="100" value="1500">
+      </label>
+      <div id="bbox-info" class="mono dim"></div>
+      <button id="btn-datos" class="primario">Descargar datos OSM</button>
+      <div class="progreso oculto" id="prog-datos"><div></div></div>
+    </section>
+
+    <section class="step deshabilitado" id="step-atractores">
+      <h2><span class="n">3</span> Atractores <small>(orígenes-destinos)</small></h2>
+      <p class="nota">Pesos 1–10 = conocimiento local. Propuestos desde OSM: <b>corrígelos antes de correr</b>.</p>
+      <table id="tabla-atractores">
+        <thead><tr><th></th><th>Nombre</th><th>Tipo</th><th>Peso</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <button id="btn-proponer" class="ghost">↻ Proponer de nuevo desde OSM</button>
+    </section>
+
+    <section class="step deshabilitado" id="step-motor">
+      <h2><span class="n">4</span> Motor de flujos</h2>
+      <div class="grid2">
+        <label>Semilla <input id="p-semilla" type="number" value="42"></label>
+        <label>Agentes <input id="p-agentes" type="number" value="2048" step="256" min="128"></label>
+        <label>Ruido <input id="p-ruido" type="number" value="0.25" step="0.05" min="0" max="1"></label>
+        <label>Cohortes <input id="p-cohortes" type="number" value="8" min="1" max="16"></label>
+      </div>
+      <button id="btn-simular" class="primario">Correr simulación</button>
+      <div class="progreso oculto" id="prog-sim"><div></div></div>
+      <div id="stats" class="mono dim"></div>
+    </section>
+
+    <section class="step deshabilitado" id="step-export">
+      <h2><span class="n">5</span> Exportar</h2>
+      <div class="row">
+        <button id="btn-png">Lámina PNG</button>
+        <button id="btn-json">Parámetros JSON</button>
+      </div>
+    </section>
+
+    <div id="log" class="mono"></div>
+
+    <footer>
+      <details>
+        <summary>¿Cómo funciona este modelo?</summary>
+        <p>Proxy origen-destino: rutas mínimas con ruido sobre la red caminable real
+        (calles + red peatonal de OSM). <b>No</b> es un ABM con colisiones: es un modelo
+        de asignación reproducible (misma semilla → mismo resultado), respaldado por
+        space syntax (Choice correlaciona r=0.7–0.9 con conteos peatonales reales).
+        Muestra <i>flujo simulado potencial</i>, nunca conteos observados.</p>
+      </details>
+      <p class="atrib">Datos: © OpenStreetMap contributors (ODbL) · Geocodificación: Nominatim</p>
+    </footer>
+  </aside>
+
+  <main id="lienzo">
+    <canvas id="map"></canvas>
+    <div id="titulo-mapa" class="oculto">
+      <h3>SIMULACIÓN DE FLUJOS PEATONALES</h3>
+      <p id="subtitulo-mapa"></p>
+    </div>
+    <div id="metabox" class="mono oculto"></div>
+    <div id="legend" class="oculto">
+      <span>densidad de flujo</span>
+      <div class="grad"></div>
+      <span class="minmax"><i>bajo</i><i id="leg-max">alto</i></span>
+    </div>
+    <div id="hint">Busca una ciudad o carga la demo de Guayaquil para empezar</div>
+  </main>
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

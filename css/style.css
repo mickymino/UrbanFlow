@@ -1,0 +1,133 @@
+/* CUF · Flujos Peatonales — estética lámina computational urbanism */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --fondo: #241c18;
+  --panel: #1c1512;
+  --borde: #3a2e26;
+  --crema: #f0e8d8;
+  --crema-dim: #b3a795;
+  --oro: #d4a530;
+  --naranja: #c25e35;
+  --rojo: #9e2b25;
+  --mono: "Consolas", "JetBrains Mono", monospace;
+  --sans: "Segoe UI", system-ui, sans-serif;
+}
+
+html, body { height: 100%; }
+body { font-family: var(--sans); background: var(--fondo); color: var(--crema); overflow: hidden; }
+
+#app { display: flex; height: 100vh; }
+
+/* ---------- panel lateral ---------- */
+#panel {
+  width: 340px; min-width: 340px; height: 100%;
+  background: var(--panel); border-right: 1px solid var(--borde);
+  overflow-y: auto; padding: 18px 16px; display: flex; flex-direction: column; gap: 14px;
+}
+#panel header h1 { font-size: 17px; letter-spacing: 3px; font-weight: 700; }
+#panel header .sub { font-size: 11px; color: var(--crema-dim); margin-top: 2px; }
+.chips { display: flex; gap: 6px; margin-top: 8px; }
+.chip { width: 22px; height: 10px; border-radius: 2px; display: inline-block; }
+
+.step { border: 1px solid var(--borde); border-radius: 6px; padding: 12px; }
+.step h2 { font-size: 12px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; color: var(--crema); }
+.step h2 small { color: var(--crema-dim); text-transform: none; letter-spacing: 0; }
+.step h2 .n {
+  display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center;
+  background: var(--oro); color: #241c18; border-radius: 50%; font-size: 11px; margin-right: 6px;
+}
+.step.deshabilitado { opacity: 0.35; pointer-events: none; }
+
+.row { display: flex; gap: 6px; }
+input[type="text"], input[type="number"] {
+  background: #141311; border: 1px solid var(--borde); color: var(--crema);
+  border-radius: 4px; padding: 6px 8px; font-size: 12px; width: 100%;
+}
+input[type="range"] { width: 100%; accent-color: var(--oro); }
+label { font-size: 11px; color: var(--crema-dim); display: block; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+
+button {
+  background: #2e241e; color: var(--crema); border: 1px solid var(--borde);
+  border-radius: 4px; padding: 7px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+button:hover { border-color: var(--oro); }
+button.primario { background: var(--oro); color: #241c18; font-weight: 700; width: 100%; margin-top: 8px; }
+button.primario:hover { background: #e6b840; }
+button.ghost { width: 100%; margin-top: 8px; background: transparent; }
+button:disabled { opacity: 0.4; cursor: default; }
+
+#resultados { list-style: none; margin-top: 6px; }
+#resultados li {
+  font-size: 12px; padding: 6px 8px; border: 1px solid var(--borde); border-radius: 4px;
+  margin-bottom: 4px; cursor: pointer; color: var(--crema-dim);
+}
+#resultados li:hover { border-color: var(--oro); color: var(--crema); }
+
+.pill {
+  margin-top: 8px; padding: 6px 10px; border-radius: 999px; font-size: 12px;
+  background: rgba(212, 165, 48, 0.12); border: 1px solid var(--oro); color: var(--oro);
+}
+.oculto { display: none !important; }
+.nota { font-size: 11px; color: var(--crema-dim); margin-bottom: 8px; }
+.mono { font-family: var(--mono); }
+.dim { color: var(--crema-dim); font-size: 11px; margin-top: 6px; }
+
+#tabla-atractores { width: 100%; border-collapse: collapse; font-size: 11px; }
+#tabla-atractores th { text-align: left; color: var(--crema-dim); font-weight: 400; padding: 2px 4px; }
+#tabla-atractores td { padding: 3px 4px; border-top: 1px solid var(--borde); }
+#tabla-atractores td input[type="number"] { width: 44px; padding: 3px 4px; }
+#tabla-atractores td input[type="text"] { padding: 3px 4px; }
+#tabla-atractores .tipo { color: var(--crema-dim); font-size: 10px; }
+
+.progreso { height: 4px; background: #141311; border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.progreso div { height: 100%; width: 0%; background: linear-gradient(90deg, var(--crema), var(--oro), var(--naranja)); transition: width 0.2s; }
+
+#log {
+  font-size: 10px; color: var(--crema-dim); max-height: 110px; overflow-y: auto;
+  border-top: 1px dashed var(--borde); padding-top: 8px; line-height: 1.6;
+}
+#log .err { color: #e07a5f; }
+
+footer { margin-top: auto; font-size: 10px; color: var(--crema-dim); }
+footer summary { cursor: pointer; color: var(--oro); font-size: 11px; margin-bottom: 4px; }
+footer p { line-height: 1.5; }
+.atrib { margin-top: 8px; border-top: 1px solid var(--borde); padding-top: 6px; }
+
+/* ---------- lienzo ---------- */
+#lienzo { position: relative; flex: 1; height: 100%; }
+#map { width: 100%; height: 100%; display: block; cursor: grab; }
+#map:active { cursor: grabbing; }
+
+#hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--crema-dim); font-size: 14px; letter-spacing: 1px; pointer-events: none;
+}
+
+#titulo-mapa { position: absolute; left: 24px; bottom: 24px; pointer-events: none; }
+#titulo-mapa h3 { font-size: 20px; letter-spacing: 4px; color: var(--crema); }
+#titulo-mapa p { font-size: 11px; color: var(--crema-dim); margin-top: 4px; }
+
+#metabox {
+  position: absolute; right: 24px; bottom: 24px; font-size: 10px; line-height: 1.7;
+  color: var(--crema-dim); background: rgba(20, 15, 12, 0.75); border: 1px solid var(--borde);
+  padding: 8px 12px; border-radius: 4px; pointer-events: none; white-space: pre;
+}
+
+#legend {
+  position: absolute; right: 24px; top: 24px; width: 150px; font-size: 10px; color: var(--crema-dim);
+  background: rgba(20, 15, 12, 0.75); border: 1px solid var(--borde); padding: 8px 12px; border-radius: 4px;
+}
+#legend .grad {
+  height: 8px; border-radius: 2px; margin: 5px 0 3px;
+  background: linear-gradient(90deg, #f0e8d8, #d4a530, #c25e35, #9e2b25);
+}
+#legend .minmax { display: flex; justify-content: space-between; }
+#legend i { font-style: normal; }
+
+@media (max-width: 760px) {
+  #app { flex-direction: column; }
+  #panel { width: 100%; min-width: 0; height: 55%; }
+  #lienzo { height: 45%; }
+}
