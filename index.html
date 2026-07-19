@@ -11,9 +11,10 @@
 <div id="app">
   <header id="navbar">
     <div id="logo"><b>UrbanFlow</b><span>Computational Urbanism Framework</span></div>
-    <span class="chip-preview">Vista previa · datos de demostración</span>
+    <span class="chip-preview">Datos OSM · nivel exploratorio</span>
     <div id="nav-acciones">
       <button class="btn" id="btn-tema" title="Cambiar tema de la interfaz">☀ Claro</button>
+      <button class="btn" id="btn-lamina">Modo lámina</button>
       <button class="btn" id="btn-export-png">Exportar PNG</button>
       <button class="btn" id="btn-export-json">Exportar escenario (JSON)</button>
       <button class="btn" id="btn-ayuda-nav">Ayuda</button>
@@ -43,7 +44,7 @@
         </div>
         <div id="res-ciudades"></div>
         <div id="minimapa"></div>
-        <div id="ubicacion-actual">Sin ubicación — busca una ciudad o carga el caso validado</div>
+        <div id="ubicacion-actual">Ubicación: Guayaquil, Ecuador</div>
       </div>
 
       <div class="tarjeta">
@@ -55,7 +56,6 @@
         <button class="btn" id="btn-demo" style="width:100%;margin-top:6px">★ Cargar caso validado — Centro Histórico GYE</button>
         <div id="estado-datos" class="nota" style="margin-top:6px"></div>
         <div class="prog oculto" id="prog-datos"><div></div></div>
-      </div>
 
       <div>
         <div class="titulo-seccion">Escenario</div>
@@ -169,7 +169,7 @@
         </div>
 
         <div class="overlay" id="metadatos-mapa">
-          Red de simulación: datos sintéticos de demostración · Modelo proxy OD — nivel exploratorio
+          Red peatonal OpenStreetMap · Modelo proxy OD — nivel exploratorio
         </div>
 
         <div class="overlay" id="escala-grafica" aria-label="Escala gráfica">
@@ -221,25 +221,169 @@
 
     <!-- ============ DERECHA ============ -->
     <aside id="col-der">
-      <div>
-        <div class="titulo-seccion">Resultados del análisis</div>
-      <div id="kpis">
-        <div class="kpi"><div class="e">Flujo máximo <span class="ayuda" data-tip="Mayor número de pasos simulados acumulados en un solo tramo de la red. Unidad honesta del modelo: pasos por tramo, no peatones reales por m².">i</span></div><div class="v" id="k-max">—</div><div class="u">pasos / tramo</div></div>
-        <div class="kpi"><div class="e">Flujo promedio</div><div class="v" id="k-prom">—</div><div class="u">pasos / tramo con flujo</div></div>
-        <div class="kpi"><div class="e">Tiempo medio de recorrido</div><div class="v" id="k-tiempo">—</div><div class="u">min (a 1,4 m/s)</div></div>
-        <div class="kpi"><div class="e">Distancia media</div><div class="v" id="k-dist">—</div><div class="u">m por ruta</div></div>
-        <div class="kpi"><div class="e">Tramo más cargado</div><div class="v txt" id="k-top">—</div></div>
-        <div class="kpi"><div class="e">Accesibilidad (10 min) <span class="ayuda" data-tip="Porcentaje de la red peatonal alcanzable en 10 minutos caminando desde los orígenes activos, con las barreras aplicadas.">i</span></div><div class="v" id="k-acc">—</div><div class="u">% de la red alcanzable</div></div>
-      </div>
+      <div id="panel-res">
 
-      <div class="tarjeta oculto" id="comparacion">
-        <div class="titulo-seccion">Comparación de escenarios</div>
-        <div id="comp-fila"></div>
-      </div>
+        <!-- ========== 1. RESUMEN DEL ANÁLISIS ========== -->
+        <div class="pb-card">
+          <div class="pb-tit"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13z"/><path d="M8 4.8v3.6l2.4 1.4"/></svg>Resumen del análisis</div>
+          <div id="pb-resumen-vacio" class="pb-vacio">Corre la simulación para obtener el diagnóstico del escenario.</div>
+          <div id="pb-resumen" class="oculto">
+            <div id="pb-estado-fila">
+              <div id="pb-anillo">
+                <svg width="52" height="52"><circle cx="26" cy="26" r="21" fill="none" stroke="var(--borde)" stroke-width="5"/>
+                  <circle id="pb-anillo-arco" cx="26" cy="26" r="21" fill="none" stroke="var(--verde)" stroke-width="5"
+                    stroke-linecap="round" stroke-dasharray="132" stroke-dashoffset="132"/></svg>
+                <div class="val" id="pb-anillo-val">—</div>
+              </div>
+              <div id="pb-estado-txt">
+                <div class="e" id="pb-estado">—</div>
+                <div class="s" id="pb-estado-sub">Índice de estado del escenario</div>
+              </div>
+            </div>
+            <div id="pb-diag">—</div>
+            <div id="pb-madurez">
+              <div class="pb-mad-cab">
+                <span style="color:var(--tenue)">Madurez del análisis
+                  <span class="ayuda" data-tip="El modelo no está calibrado con conteos reales, por lo que no existe un porcentaje de confianza medible. Esto indica cuántas condiciones de un análisis sólido se cumplen.">i</span></span>
+                <b id="pb-mad-pct">—</b>
+              </div>
+              <div class="pb-pista"><i id="pb-mad-barra" style="width:0;background:var(--ambar)"></i></div>
+              <div id="pb-mad-lista"></div>
+            </div>
+          </div>
+        </div>
 
-      <div id="log-zona"></div>
+        <!-- ========== 2. INDICADORES CLAVE ========== -->
+        <div class="pb-card">
+          <div class="pb-tit"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V7M6.7 13V3M11.3 13V9M2 13h12"/></svg>Indicadores clave</div>
+          <div id="pb-kpis"></div>
+        </div>
+
+        <!-- ========== 3. COBERTURA PEATONAL ========== -->
+        <div class="pb-card">
+          <div class="pb-tit"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.6a6.4 6.4 0 100 12.8A6.4 6.4 0 008 1.6z"/><path d="M8 4.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z"/></svg>Cobertura peatonal
+            <span class="ayuda" data-tip="Porcentaje de la superficie del área de estudio que queda a menos de 100 m de un punto de la red alcanzable caminando desde los orígenes activos, en 5, 10 y 15 minutos a 1,4 m/s.">i</span></div>
+          <div id="pb-cobertura-vacio" class="pb-vacio">Disponible tras la simulación.</div>
+          <div id="pb-cobertura" class="oculto"></div>
+        </div>
+
+        <!-- ========== 4. DISTRIBUCIÓN DEL FLUJO ========== -->
+        <div class="pb-card">
+          <div class="pb-tit"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 4h11M2.5 8h7M2.5 12h4"/></svg>Distribución del flujo</div>
+          <div id="pb-dist-vacio" class="pb-vacio">Muestra qué proporción de los viajes simulados termina en cada destino.</div>
+          <div id="pb-dist" class="oculto"></div>
+        </div>
+
+        <!-- ========== comparación (se mantiene) ========== -->
+        <div class="pb-card oculto" id="comparacion">
+          <div class="pb-tit"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 13V6M11 13V3M8 13V9"/></svg>Comparación de escenarios</div>
+          <div id="comp-fila"></div>
+        </div>
+
+        <!-- ========== registro ========== -->
+        <div class="pb-card">
+          <div class="pb-tit" id="pb-log-tit">Registro de actividad <span class="fl">▾</span></div>
+          <div id="log-zona"></div>
+        </div>
+
       </div>
     </aside>
+  </div>
+</div>
+
+<!-- ==================== MODO LÁMINA ==================== -->
+<div id="modo-lamina">
+  <aside id="lam-config">
+    <h3>Composición de lámina</h3>
+
+    <div class="grupo">
+      <label>Formato</label>
+      <div class="lam-fmt" id="lam-formatos">
+        <button data-fmt="a4h">A4 horizontal</button>
+        <button data-fmt="a4v">A4 vertical</button>
+        <button data-fmt="a3h" class="sel">A3 horizontal</button>
+        <button data-fmt="a3v">A3 vertical</button>
+      </div>
+      <div class="nota" id="lam-medidas" style="margin-top:6px;font-size:10.5px">—</div>
+    </div>
+
+    <div class="grupo">
+      <label>Título</label>
+      <input type="text" id="lam-titulo" placeholder="Título de la lámina">
+      <label style="margin-top:8px">Subtítulo</label>
+      <input type="text" id="lam-sub" placeholder="Ubicación, fecha o escenario">
+    </div>
+
+    <div class="grupo">
+      <h3>Elementos</h3>
+      <label class="lam-check"><input type="checkbox" id="lam-op-leyenda" checked> Leyenda</label>
+      <label class="lam-check"><input type="checkbox" id="lam-op-kpis" checked> Indicadores clave</label>
+      <label class="lam-check"><input type="checkbox" id="lam-op-diag" checked> Diagnóstico</label>
+      <label class="lam-check"><input type="checkbox" id="lam-op-escala" checked> Escala y norte</label>
+      <label class="lam-check"><input type="checkbox" id="lam-op-nota" checked> Nota metodológica</label>
+      <label class="lam-check"><input type="checkbox" id="lam-op-creditos" checked> Créditos y fuente</label>
+      <label class="lam-check"><input type="checkbox" id="lam-op-oscura"> Fondo oscuro</label>
+    </div>
+
+    <div class="grupo">
+      <h3>Leyenda — elementos</h3>
+      <div id="lam-items"></div>
+      <div class="nota" style="margin-top:7px;font-size:10.5px">Desmarca lo que no quieras mostrar; edita los textos directamente.</div>
+    </div>
+
+    <div class="grupo">
+      <h3>Indicadores</h3>
+      <div id="lam-kpi-items"></div>
+    </div>
+
+    <div class="grupo">
+      <label>Nota metodológica</label>
+      <textarea id="lam-nota-txt"></textarea>
+      <label style="margin-top:8px">Créditos</label>
+      <textarea id="lam-cred-txt"></textarea>
+    </div>
+  </aside>
+
+  <div id="lam-escenario">
+    <div id="lam-acciones">
+      <button class="btn" id="lam-imprimir">Imprimir / PDF</button>
+      <button class="btn primario" id="lam-png">Descargar PNG</button>
+      <button class="btn" id="lam-cerrar">Cerrar</button>
+    </div>
+    <div id="lam-hoja">
+      <div id="lam-cab">
+        <div id="lam-titulo-t">—</div>
+        <div id="lam-sub-t">—</div>
+      </div>
+      <div id="lam-cuerpo">
+        <div id="lam-mapa-caja">
+          <img id="lam-mapa-img" alt="Mapa de flujos">
+          <!-- rosa de los vientos: círculo doble con aguja al norte -->
+          <div id="lam-norte-caja">
+          <svg id="lam-norte" viewBox="0 0 100 132" fill="none" stroke="currentColor">
+            <text x="50" y="26" text-anchor="middle" font-size="30" font-weight="700"
+                  fill="currentColor" stroke="none" font-family="Helvetica,Arial,sans-serif">N</text>
+            <g id="lam-norte-rosa">
+              <circle cx="50" cy="82" r="34" stroke-width="1.6"/>
+              <circle cx="50" cy="82" r="27" stroke-width="1.6"/>
+              <line x1="50" y1="34" x2="50" y2="130" stroke-width="1.6"/>
+              <line x1="2" y1="82" x2="98" y2="82" stroke-width="1.6"/>
+              <rect x="43" y="46" width="14" height="36" fill="currentColor" stroke="none"/>
+            </g>
+          </svg>
+          </div>
+          <div id="lam-escala-map">
+            <div class="regla" id="lam-esc-regla"></div>
+            <div class="rot" id="lam-esc-rot"></div>
+          </div>
+        </div>
+        <div id="lam-lateral"></div>
+      </div>
+      <div id="lam-pie">
+        <div id="lam-nota">—</div>
+        <div id="lam-creditos">—</div>
+      </div>
+    </div>
   </div>
 </div>
 

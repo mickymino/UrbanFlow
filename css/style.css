@@ -1,4 +1,4 @@
-/* UrbanFlow v0.3 — interfaz MapLibre (hoja validada en la vista previa v5) */
+/* UrbanFlow v0.4 — interfaz MapLibre, panel de resultados y modo lámina */
 :root{
   --fondo:#0f1113; --panel:#15181b; --panel2:#1a1e22; --borde:rgba(255,255,255,.07);
   --texto:#e8e6e1; --tenue:#9a978f; --debil:#6b6963;
@@ -170,3 +170,229 @@ table.od td{padding:4px 4px;border-bottom:1px solid var(--borde)}
 body.claro .maplibregl-ctrl-group{background:rgba(255,255,255,.93)!important}
 body.claro .maplibregl-ctrl-group button{filter:none}
 body.claro .maplibregl-ctrl-attrib{background:rgba(255,255,255,.8)!important}
+
+
+/* ==================== MODO LÁMINA ==================== */
+#modo-lamina{position:fixed;inset:0;z-index:900;background:#1a1c1e;display:none;
+  grid-template-columns:280px 1fr;overflow:hidden}
+#modo-lamina.abierto{display:grid}
+body.claro #modo-lamina{background:#c9c6bf}
+
+/* --- panel de configuración --- */
+#lam-config{background:var(--panel);border-right:1px solid var(--borde);overflow-y:auto;padding:14px}
+#lam-config h3{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--tenue);
+  margin:0 0 10px;font-weight:600}
+#lam-config .grupo{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--borde)}
+#lam-config .grupo:last-child{border-bottom:0}
+#lam-config label{display:block;font-size:11.5px;color:var(--tenue);margin-bottom:5px}
+#lam-config input[type=text],#lam-config textarea,#lam-config select{width:100%;font-size:12px}
+#lam-config textarea{resize:vertical;min-height:52px;font-family:inherit}
+.lam-check{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--texto);
+  padding:5px 0;cursor:pointer;user-select:none}
+.lam-check input{width:14px;height:14px;flex:none;cursor:pointer;accent-color:var(--ambar)}
+.lam-fmt{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px}
+.lam-fmt button{padding:8px 6px;font-size:11.5px;border:1px solid var(--borde);border-radius:8px;
+  background:var(--panel2);color:var(--tenue);cursor:pointer;transition:.15s}
+.lam-fmt button.sel{border-color:var(--ambar);color:var(--ambar);background:rgba(212,165,48,.08)}
+#lam-items{margin-top:4px}
+.lam-item{display:flex;align-items:center;gap:7px;padding:4px 0}
+.lam-item input[type=checkbox]{width:14px;height:14px;flex:none;accent-color:var(--ambar)}
+.lam-item input[type=text]{flex:1;font-size:11.5px;padding:3px 6px}
+.lam-item .mues{width:18px;flex:none;display:flex;align-items:center;justify-content:center}
+
+/* --- escenario de la lámina --- */
+#lam-escenario{overflow:auto;padding:26px;display:flex;align-items:flex-start;justify-content:center}
+#lam-hoja{background:#fff;color:#1a1a1a;box-shadow:0 8px 40px rgba(0,0,0,.5);overflow:hidden;
+  display:flex;flex-direction:column;flex:none;transform-origin:top center}
+#lam-hoja.oscura{background:#101214;color:#f0e8d8}
+#lam-hoja{--k:1}
+#lam-cab{padding:calc(16px*var(--k)) calc(20px*var(--k)) calc(12px*var(--k));
+  border-bottom:1.5px solid currentColor;flex:none}
+#lam-titulo-t{font-size:calc(19px*var(--k));font-weight:700;line-height:1.2;
+  letter-spacing:-.01em;overflow-wrap:anywhere}
+#lam-sub-t{font-size:calc(12px*var(--k));opacity:.72;margin-top:calc(3px*var(--k));overflow-wrap:anywhere}
+#lam-cuerpo{flex:1;display:flex;min-height:0;
+  padding:calc(14px*var(--k)) calc(20px*var(--k));gap:calc(14px*var(--k))}
+#lam-mapa-caja{flex:1;position:relative;border:1px solid rgba(128,128,128,.35);min-width:0;overflow:hidden}
+/* norte y escala van SOBRE el mapa, como en la cartografía impresa */
+#lam-norte-caja{position:absolute;top:12px;right:12px;z-index:2;
+  background:rgba(255,255,255,.82);padding:6px 7px;border-radius:3px;
+  border:1px solid rgba(0,0,0,.14);line-height:0}
+#lam-hoja.oscura #lam-norte-caja{background:rgba(16,18,20,.82);border-color:rgba(255,255,255,.18)}
+#lam-norte{display:block;width:44px}
+#lam-escala-map{position:absolute;bottom:12px;right:12px;z-index:2;
+  background:rgba(255,255,255,.82);padding:5px 8px;border-radius:3px;
+  border:1px solid rgba(0,0,0,.14)}
+#lam-hoja.oscura #lam-escala-map{background:rgba(16,18,20,.82);border-color:rgba(255,255,255,.18)}
+#lam-escala-map .regla{position:relative;height:6px;border:1px solid currentColor;border-top:0;opacity:.85}
+#lam-escala-map .regla span{position:absolute;top:0;width:1px;height:6px;background:currentColor}
+#lam-escala-map .rot{position:relative;height:13px;margin-top:2px;font-size:9.5px;opacity:.85}
+#lam-escala-map .rot span{position:absolute;transform:translateX(-50%);white-space:nowrap}
+/* La imagen del mapa mantiene su relación de aspecto. Se usa cover para llenar
+   la caja, pero el recorte se compensa en el cálculo de la escala gráfica
+   (ver lamEscalaYNorte), de modo que la regla siga siendo métricamente correcta. */
+#lam-mapa-img{width:100%;height:100%;object-fit:fill;display:block}
+#lam-lateral{width:calc(190px*var(--k));flex:none;display:flex;flex-direction:column;
+  gap:calc(11px*var(--k));font-size:calc(10px*var(--k));min-width:0;overflow:hidden}
+#lam-hoja.vertical #lam-cuerpo{flex-direction:column}
+#lam-hoja.vertical #lam-lateral{width:100%;flex-direction:row;flex-wrap:wrap;gap:14px}
+#lam-hoja.vertical #lam-lateral > *{flex:1;min-width:150px}
+.lam-bloque .t{font-size:calc(9px*var(--k));letter-spacing:.09em;text-transform:uppercase;
+  opacity:.6;margin-bottom:calc(5px*var(--k));font-weight:700}
+.lam-leyenda .fila{display:flex;align-items:center;gap:calc(6px*var(--k));
+  margin-bottom:calc(3px*var(--k));font-size:calc(10px*var(--k));min-width:0;overflow-wrap:anywhere}
+.lam-leyenda .fila .mk{width:calc(16px*var(--k));flex:none;display:flex;align-items:center}
+.lam-rampa{height:calc(7px*var(--k));border-radius:2px;margin:calc(3px*var(--k)) 0;
+  border:0.5px solid rgba(0,0,0,.22);display:flex;overflow:hidden;
+  background:linear-gradient(90deg,#f0e8d8,#d4a530 45%,#c25e35 75%,#9e2b25)}
+.lam-rampa-r{display:flex;justify-content:space-between;font-size:calc(9px*var(--k));opacity:.7}
+.lam-kpi{display:flex;justify-content:space-between;gap:calc(8px*var(--k));
+  padding:calc(3px*var(--k)) 0;border-bottom:1px solid rgba(128,128,128,.18);
+  font-size:calc(10px*var(--k));align-items:baseline}
+.lam-kpi:last-child{border-bottom:0}
+.lam-kpi .k{opacity:.7;flex:1;min-width:0;overflow-wrap:anywhere}
+/* los valores textuales (nombres de calles) se ajustan en varias líneas
+   alineados a la derecha; los numéricos, al ser cortos, no se parten */
+.lam-kpi .v{font-weight:700;text-align:right;max-width:58%;overflow-wrap:anywhere}
+.lam-kpi .v.num{white-space:nowrap;max-width:none}
+#lam-pie{padding:calc(9px*var(--k)) calc(20px*var(--k)) calc(13px*var(--k));
+  border-top:1px solid rgba(128,128,128,.3);flex:none;display:flex;justify-content:space-between;
+  align-items:flex-end;gap:calc(16px*var(--k));font-size:calc(8.5px*var(--k));
+  opacity:.68;line-height:1.45;max-height:calc(64px*var(--k));overflow:hidden}
+#lam-nota{flex:1;min-width:0;overflow-wrap:anywhere}
+#lam-creditos{text-align:right;flex:none;max-width:34%;overflow-wrap:anywhere}
+
+/* --- barra de acciones --- */
+#lam-acciones{position:absolute;top:14px;right:20px;display:flex;gap:8px;z-index:5}
+/* --- impresión / PDF ---
+   La hoja conserva su tamaño real en milímetros: forzar width:100% y 100vh
+   la deformaba y recortaba el mapa. El tamaño de página se fija con @page
+   desde JS (lamPrepararImpresion) según el formato elegido. */
+@media print{
+  html,body{width:auto!important;height:auto!important;margin:0!important;padding:0!important;
+    background:#fff!important;overflow:visible!important}
+  body > *:not(#modo-lamina){display:none!important}
+  #modo-lamina{position:static!important;display:block!important;background:#fff!important;
+    inset:auto!important;overflow:visible!important}
+  #lam-config,#lam-acciones{display:none!important}
+  #lam-escenario{padding:0!important;margin:0!important;display:block!important;
+    overflow:visible!important;height:auto!important}
+  #lam-hoja{box-shadow:none!important;transform:none!important;margin:0!important;
+    page-break-inside:avoid;break-inside:avoid;overflow:hidden!important}
+  #lam-mapa-img{image-rendering:auto}
+  /* Los navegadores omiten los fondos al imprimir: sin esto, la rampa de
+     intensidad (linear-gradient) y los puntos de color de la leyenda salen
+     en blanco en el PDF aunque se vean bien en pantalla y en el PNG. */
+  #modo-lamina,#modo-lamina *{
+    -webkit-print-color-adjust:exact!important;
+    print-color-adjust:exact!important;
+    color-adjust:exact!important;
+  }
+  /* nada debe generar una segunda página */
+  #lam-hoja *{page-break-inside:avoid;break-inside:avoid}
+}
+
+/* ==================== PANEL DE RESULTADOS (estilo Power BI) ==================== */
+#col-der{padding:0;gap:0;background:var(--fondo)}
+#panel-res{display:flex;flex-direction:column;gap:10px;padding:12px}
+.pb-card{background:var(--panel2);border:1px solid var(--borde);border-radius:12px;padding:14px}
+.pb-card + .pb-card{margin-top:0}
+.pb-tit{display:flex;align-items:center;gap:7px;font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--tenue);margin-bottom:11px;font-weight:600}
+.pb-tit .ic{width:13px;height:13px;opacity:.75;flex:none}
+.pb-vacio{font-size:12px;color:var(--debil);line-height:1.55;padding:2px 0}
+
+/* --- 1. resumen --- */
+#pb-estado-fila{display:flex;align-items:center;gap:11px;margin-bottom:11px}
+#pb-anillo{position:relative;width:52px;height:52px;flex:none}
+#pb-anillo svg{transform:rotate(-90deg)}
+#pb-anillo .val{position:absolute;inset:0;display:grid;place-items:center;font-size:14px;font-weight:700}
+#pb-estado-txt .e{font-size:15px;font-weight:700;line-height:1.2}
+#pb-estado-txt .s{font-size:11px;color:var(--tenue);margin-top:2px}
+.est-optimo{color:var(--verde)} .est-moderado{color:var(--ambar)} .est-critico{color:var(--rojo)}
+#pb-diag{font-size:12px;line-height:1.55;color:var(--texto);opacity:.9}
+#pb-madurez{margin-top:11px;padding-top:11px;border-top:1px solid var(--borde)}
+.pb-mad-cab{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;margin-bottom:6px}
+.pb-mad-cab b{font-size:13px}
+#pb-mad-lista{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+.pb-mad-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--tenue)}
+.pb-mad-item .mk{width:12px;flex:none;text-align:center;font-size:10px}
+.pb-mad-item.ok{color:var(--texto)} .pb-mad-item.ok .mk{color:var(--verde)}
+.pb-mad-item.no .mk{color:var(--debil)}
+
+/* --- 2. indicadores --- */
+#pb-kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pb-kpi{background:var(--panel);border:1px solid var(--borde);border-radius:10px;padding:10px 11px;
+  display:flex;flex-direction:column;gap:3px;min-width:0;position:relative;overflow:hidden}
+.pb-kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--debil);opacity:.55}
+.pb-kpi.c-ok::before{background:var(--verde)} .pb-kpi.c-med::before{background:var(--ambar)}
+.pb-kpi.c-alt::before{background:var(--rojo)} .pb-kpi.c-neu::before{background:var(--debil)}
+.pb-kpi .cab{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--tenue);
+  text-transform:uppercase;letter-spacing:.04em;line-height:1.3}
+.pb-kpi .cab .ic{width:11px;height:11px;flex:none;opacity:.8}
+.pb-kpi .v{font-size:19px;font-weight:700;line-height:1.15;letter-spacing:-.02em}
+.pb-kpi .v small{font-size:11px;font-weight:500;color:var(--tenue);margin-left:2px}
+.pb-kpi .u{font-size:10.5px;color:var(--debil);line-height:1.35}
+.pb-kpi.ancha{grid-column:1/-1}
+.pb-kpi.ancha .v{font-size:14px;font-weight:600}
+.pb-kpi .chispa{display:flex;align-items:flex-end;gap:1.5px;height:16px;margin-top:2px}
+.pb-kpi .chispa i{flex:1;background:var(--ambar);opacity:.55;border-radius:1px;min-height:1px}
+
+/* --- 3. cobertura --- */
+.pb-barra{margin-bottom:11px}
+.pb-barra:last-child{margin-bottom:0}
+.pb-barra .cab{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px;margin-bottom:5px}
+.pb-barra .cab .t{color:var(--tenue)}
+.pb-barra .cab .p{font-weight:700;font-size:13px}
+.pb-pista{height:7px;background:var(--panel);border-radius:99px;overflow:hidden}
+.pb-pista i{display:block;height:100%;border-radius:99px;transition:width .5s ease}
+
+/* --- 4. distribución --- */
+.pb-dest{margin-bottom:10px}
+.pb-dest:last-child{margin-bottom:0}
+.pb-dest .cab{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;margin-bottom:4px}
+.pb-dest .cab .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-dest .cab .p{font-weight:700;flex:none}
+.pb-dest .pista{height:6px;background:var(--panel);border-radius:99px;overflow:hidden}
+.pb-dest .pista i{display:block;height:100%;border-radius:99px;background:var(--ambar);transition:width .5s ease}
+.pb-dest.otros .pista i{background:var(--debil)}
+
+/* --- registro plegable --- */
+#pb-log-tit{display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+#pb-log-tit .fl{font-size:10px;color:var(--tenue);transition:transform .2s}
+#panel-res.log-cerrado #pb-log-tit .fl{transform:rotate(-90deg)}
+#panel-res.log-cerrado #log-zona{display:none}
+
+
+/* --- ajustes de tarjetas de indicador: estado + contexto --- */
+.pb-kpi{min-height:118px;justify-content:flex-start;gap:0}
+.pb-kpi .cab{align-items:flex-start;min-height:24px;margin-bottom:4px}
+.pb-kpi .fila-v{display:flex;align-items:baseline;gap:4px;flex-wrap:wrap}
+/* ubicación de las tarjetas de localización: precede al valor numérico */
+.pb-kpi .ubic{font-size:12.5px;font-weight:600;line-height:1.3;margin-bottom:2px;
+  color:var(--texto);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-kpi .un{font-size:11px;font-weight:600;color:var(--tenue);letter-spacing:.01em}
+.pb-kpi .extra{font-size:11px;color:var(--debil);margin-left:2px}
+.pb-kpi .interp{font-size:10.5px;line-height:1.35;margin-top:auto;padding-top:6px;
+  color:var(--tenue)}
+.pb-kpi .cual{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;
+  letter-spacing:.03em;margin-top:5px}
+.pb-kpi .cual .dot{width:7px;height:7px;border-radius:50%;flex:none}
+/* etiqueta de los indicadores DESCRIPTIVOS: sin semáforo, sin juicio de valor */
+.pb-kpi .etiq{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;
+  margin-top:5px;padding:2px 8px;border-radius:99px;color:var(--tenue);
+  background:var(--panel2);border:1px solid var(--borde)}
+.cual.n-exc,.cual.n-alt{color:var(--verde)}
+.cual.n-exc .dot,.cual.n-alt .dot{background:var(--verde)}
+.cual.n-mod{color:var(--ambar)} .cual.n-mod .dot{background:var(--ambar)}
+.cual.n-baj{color:#d98236} .cual.n-baj .dot{background:#d98236}
+.cual.n-def{color:var(--rojo)} .cual.n-def .dot{background:var(--rojo)}
+.cual.n-cri{color:var(--rojo)} .cual.n-cri .dot{background:var(--rojo)}
+.cual.n-neu{color:var(--debil)} .cual.n-neu .dot{background:var(--debil)}
+.pb-kpi .ctx{font-size:10.5px;color:var(--debil);line-height:1.4;margin-top:5px}
+.pb-kpi.ancha{min-height:auto}
+
+body.claro .pb-kpi{background:#fff}
+body.claro .pb-kpi .etiq{background:rgba(0,0,0,.04)}
+body.claro .pb-pista,body.claro .pb-dest .pista{background:rgba(0,0,0,.07)}
+

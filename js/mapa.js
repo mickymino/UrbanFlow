@@ -8,6 +8,8 @@
 // en ese modo NO dispara style.load, con lo que las capas propias jamás se
 // re-añadirían. SIEMPRE se intercambian estilos con {diff:false}.
 
+import { ESCALAS, calcularEscala, metrosPorPixelCSS, rotuloEscala } from "./escala-metrica.js";
+
 const ATRIB_OSM = "© OpenStreetMap contributors";
 const ATRIB_CARTO = "© OpenStreetMap contributors · © CARTO";
 
@@ -47,20 +49,6 @@ export function colorFlujo(t) {
 }
 export const rampaCss = (t) => { const [r, g, b] = colorFlujo(Math.max(0, Math.min(1, t))); return `rgb(${r},${g},${b})`; };
 export const ROL_COLOR = { origen: "#5fbf6f", destino: "#e05252", ambos: "#d4a530" };
-
-// Escala gráfica única: una sola regla con 4 marcas en valores cartográficos.
-const ESCALAS = [
-  { T: 100, m: [0, 25, 50, 100] }, { T: 200, m: [0, 50, 100, 200] },
-  { T: 500, m: [0, 100, 250, 500] }, { T: 1000, m: [0, 250, 500, 1000] },
-  { T: 2000, m: [0, 500, 1000, 2000] }, { T: 5000, m: [0, 1000, 2500, 5000] },
-  { T: 10000, m: [0, 2500, 5000, 10000] }, { T: 20000, m: [0, 5000, 10000, 20000] },
-  { T: 50000, m: [0, 10000, 25000, 50000] },
-];
-function rotuloEscala(v, T) {
-  if (v === 0) return "0";
-  if (T >= 1000 && v >= 1000) { const k = v / 1000; return (Number.isInteger(k) ? k : k.toFixed(1)) + " km"; }
-  return String(v);
-}
 
 export class MapaUF {
   /**
@@ -250,25 +238,20 @@ export class MapaUF {
     const regla = document.getElementById(this.o.idEscalaRegla);
     const rot = document.getElementById(this.o.idEscalaRotulos);
     if (!regla || !rot || !this.map) return;
-    const lat = this.map.getCenter().lat;
-    const mpp = (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, this.map.getZoom());
-    let elegido = ESCALAS[0];
-    for (const e of ESCALAS) if (e.T / mpp <= 240) elegido = e; // la mayor que quepa en 240 px
-    const W = Math.round(elegido.T / mpp);
+    // El mapa se ve a tamaño natural: metros por píxel CSS directos.
+    const esc = calcularEscala(metrosPorPixelCSS(this.map), 240);
+    const W = Math.round(esc.anchoPx);
     regla.style.width = W + "px"; rot.style.width = W + "px";
     regla.innerHTML = ""; rot.innerHTML = "";
-    elegido.m.forEach((v, i) => {
-      const pct = (v / elegido.T) * 100;
+    esc.marcas.forEach((mk) => {
       const tick = document.createElement("span");
-      tick.className = i === 0 || i === elegido.m.length - 1 ? "mayor" : "menor";
-      tick.style.left = "calc(" + pct + "% - 0.75px)";
+      tick.className = mk.primera || mk.ultima ? "mayor" : "menor";
+      tick.style.left = "calc(" + (mk.pct * 100) + "% - 0.75px)";
       regla.appendChild(tick);
       const et = document.createElement("span");
-      let txt = rotuloEscala(v, elegido.T);
-      if (i === elegido.m.length - 1 && elegido.T < 1000) txt += " m";
-      et.textContent = txt; et.style.left = pct + "%";
-      if (i === 0) et.style.transform = "translateX(0)";
-      if (i === elegido.m.length - 1) et.style.transform = "translateX(-100%)";
+      et.textContent = mk.txt; et.style.left = (mk.pct * 100) + "%";
+      if (mk.primera) et.style.transform = "translateX(0)";
+      if (mk.ultima) et.style.transform = "translateX(-100%)";
       rot.appendChild(et);
     });
   }

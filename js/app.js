@@ -9,10 +9,12 @@ import { crearProyector, bboxDesdeCentro, centroDeBbox } from "./geo.js";
 import { buscarCiudad } from "./geocode.js";
 import { descargarCapas } from "./osm.js";
 import { construirGrafo, aristaMasCercana } from "./graph.js";
-import { correrModelo, accesibilidad } from "./model.js";
+import { correrModelo, accesibilidad, ultimaDistMin, VEL_PEATON } from "./model.js";
 import { proponerAtractores } from "./attractors.js";
 import { DEMO_GYE } from "./presets.js";
 import { MapaUF, rampaCss, ROL_COLOR } from "./mapa.js";
+import { iniciarPanel, calcularPanel, pintarPanel, numES } from "./panel.js";
+import { iniciarLamina, lamAbrir } from "./lamina.js";
 
 const $ = (id) => document.getElementById(id);
 const CLAVE_PROYECTO = "urbanflow-proyecto-v3";
@@ -537,8 +539,7 @@ async function correrSimulacion() {
         $("estado-sim").textContent = `Calculando rutas — ${txt} (${Math.round(f * 100)} %)`;
       },
     });
-    const nodosO = res.amarres.filter((a) => a.rol !== "destino").map((a) => a.nodo);
-    res.acc10 = accesibilidad(estado.grafo, nodosO, bloqueadas, 10);
+    calcularPanel(res, esc);   // acc10, cobertura, conectividad, concentración, índice
     esc.resultado = res; estado.vistaDiff = false;
     const seg = ((performance.now() - t0) / 1000).toFixed(1);
     $("estado-sim").textContent = "";
@@ -570,22 +571,10 @@ function refrescarCabecera() {
 }
 function refrescarKPIs() {
   const res = estado.escenarios.length && escActivo().resultado;
-  const f = (v, d = 1) => (v == null ? "—" : Number(v).toLocaleString("es-EC", { maximumFractionDigits: d }));
-  if (!res) {
-    for (const id of ["k-max", "k-prom", "k-tiempo", "k-dist", "k-acc"]) $(id).textContent = "—";
-    $("k-top").textContent = "—"; $("rango-max").textContent = "—";
-    bloquearPaso(5);
-    return;
-  }
-  $("k-max").textContent = f(res.stats.max, 0);
-  $("k-prom").textContent = f(res.stats.flujoProm, 1);
-  $("k-tiempo").textContent = f(res.stats.tiempoMedioMin, 1);
-  $("k-dist").textContent = f(res.stats.distMediaM, 0);
-  $("k-top").textContent = res.stats.tramoTop ? `${res.stats.tramoTop.nombre} · ${f(res.stats.tramoTop.flujo, 0)} pasos` : "—";
-  $("k-acc").textContent = f(res.acc10, 0);
-  $("rango-max").textContent = "p95 = " + f(res.stats.p95, 0);
-  marcarPaso(5, true);
+  pintarPanel();
+  if (!res) bloquearPaso(5); else marcarPaso(5, true);
 }
+
 function refrescarComparacion() {
   const zona = $("comparacion"), fila = $("comp-fila");
   const listos = estado.escenarios.filter((e) => e.resultado);
@@ -755,6 +744,17 @@ $("btn-demo").onclick = cargarDemo;
 $("btn-correr").onclick = correrSimulacion;
 $("proyecto-nombre").addEventListener("change", guardarProyecto);
 $("objetivo").addEventListener("change", guardarProyecto);
+
+// contexto de los módulos de presentación
+iniciarPanel({
+  estado, escActivo, leerParams, VEL: VEL_PEATON,
+  accesibilidad: (g, n, b, m) => accesibilidad(g, n, b, m),
+  ultimaDistMin: () => ultimaDistMin(),   // devuelve el array, no la función
+});
+iniciarLamina({
+  mapa: () => mapa.map, escActivo, leerParams, log, numES, rampaCss,
+  estadoProyecto: () => ({ ciudad: estado.ciudad, fechaOSM: estado.fechaOSM }),
+});
 
 iniciarPanelAtr();
 pintarLista(); pintarBarreras(); pintarRed();

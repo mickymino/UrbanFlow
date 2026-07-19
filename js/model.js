@@ -69,6 +69,7 @@ export async function correrModelo({ grafo, atractores, params, barreras, onProg
 
   // 3) por cohorte: costos perturbados (+ barreras a infinito) + dijkstra por origen
   const conteo = new Int32Array(grafo.m);
+  const porDestino = new Int32Array(amarres.length);   // viajes recibidos por cada destino
   let sinRuta = 0, sumaDist = 0, rutasOk = 0;
 
   for (let k = 0; k < cohortes; k++) {
@@ -101,7 +102,7 @@ export async function correrModelo({ grafo, atractores, params, barreras, onProg
         largo += grafo.longitud[e];
         v = arbol.nodoPrevio[v];
       }
-      sumaDist += largo; rutasOk++;
+      sumaDist += largo; rutasOk++; porDestino[d]++;
     }
   }
 
@@ -119,11 +120,12 @@ export async function correrModelo({ grafo, atractores, params, barreras, onProg
   const distMedia = rutasOk ? sumaDist / rutasOk : 0;
 
   return {
-    conteo,
+    conteo, porDestino,
     stats: {
       aristasConFlujo: valores.length,
       max: maxFlujo,
       p95: pct(0.95),
+      flujoTotal: sumaFlujo,
       p90: pct(0.9),
       mediana: pct(0.5),
       flujoProm: valores.length ? sumaFlujo / valores.length : 0,
@@ -141,6 +143,11 @@ export async function correrModelo({ grafo, atractores, params, barreras, onProg
 
 // Accesibilidad: % de nodos de la red alcanzables a <= minutos desde los orígenes
 // activos, caminando a 1.4 m/s por la red real (con barreras aplicadas).
+/* Último mapa de distancias mínimas calculado por accesibilidad(): lo reutiliza
+   coberturaSuperficie() para no repetir el Dijkstra multiorigen. */
+let _ultimaDistMin = null;
+export const ultimaDistMin = () => _ultimaDistMin;
+
 export function accesibilidad(grafo, nodosOrigen, barreras, minutos = 10) {
   const limite = minutos * 60 * VEL_PEATON;
   const bloqueadas = barreras || new Set();
@@ -154,5 +161,6 @@ export function accesibilidad(grafo, nodosOrigen, barreras, minutos = 10) {
   }
   let alcanzables = 0;
   for (let i = 0; i < grafo.n; i++) if (minDist[i] <= limite) alcanzables++;
+  _ultimaDistMin = minDist;
   return grafo.n ? (100 * alcanzables) / grafo.n : 0;
 }
