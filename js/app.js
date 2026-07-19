@@ -1,633 +1,771 @@
-// UrbanFlow v0.2 — orquestador.
-// Flujo: 1 Proyecto (objetivo+ciudad) → 2 Datos (área+OSM) → 3 Escenario (atractores con
-// rol, barreras por clic) → 4 Simulación → 5 Resultados (KPIs, comparación de escenarios,
-// exportación). Modelo proxy OD — nivel EXPLORATORIO, siempre visible.
+// UrbanFlow v0.3 — orquestador (interfaz MapLibre sobre el pipeline OSM real).
+// Flujo: 1 Proyecto → Ubicación (Nominatim) → Área de estudio → 2 Datos (Overpass
+// con caché + grafo caminable) → 3 Escenario (atractores con rol/peso/radio,
+// barreras, correcciones de red) → 4 Simulación (proxy OD) → 5 Resultados
+// (KPIs honestos, comparación de 2 escenarios, diferencia en el mapa).
+// Modelo de nivel EXPLORATORIO — siempre visible.
 
-import { crearProyector, bboxDesdeCentro, centroDeBbox, ladoDeBbox } from "./geo.js";
+import { crearProyector, bboxDesdeCentro, centroDeBbox } from "./geo.js";
 import { buscarCiudad } from "./geocode.js";
 import { descargarCapas } from "./osm.js";
 import { construirGrafo, aristaMasCercana } from "./graph.js";
 import { correrModelo, accesibilidad } from "./model.js";
 import { proponerAtractores } from "./attractors.js";
-import { Renderizador } from "./render.js";
 import { DEMO_GYE } from "./presets.js";
+import { MapaUF, rampaCss, ROL_COLOR } from "./mapa.js";
 
 const $ = (id) => document.getElementById(id);
-const CLAVE_PROYECTO = "urbanflow-proyecto-v2";
+const CLAVE_PROYECTO = "urbanflow-proyecto-v3";
 
+/* ==================== catálogos del atractor ==================== */
+const TIPOS = [
+  ["parque_pequeno", "Parque pequeño", 4],
+  ["plaza", "Plaza", 6],
+  ["parque_urbano", "Parque urbano", 7],
+  ["espacio_publico", "Espacio público", 7],
+  ["hito", "Hito / museo", 6],
+  ["institucion", "Institución", 6],
+  ["universidad", "Universidad", 8],
+  ["mercado", "Mercado", 9],
+  ["centro_comercial", "Centro comercial", 9],
+  ["terminal", "Terminal / estación", 10],
+  ["malecon", "Malecón", 10],
+  ["edificio", "Edificio", 5],
+  ["otro", "Otro", 5],
+];
+const PESO_TIPO = Object.fromEntries(TIPOS.map((t) => [t[0], t[2]]));
+const ETIQ_TIPO = Object.fromEntries(TIPOS.map((t) => [t[0], t[1]]));
+const JERARQUIAS = [
+  ["barrial", "Barrial", 400],
+  ["sectorial", "Sectorial", 800],
+  ["distrital", "Distrital", 1500],
+  ["cantonal", "Cantonal", 3000],
+  ["metropolitano", "Metropolitano", 6000],
+];
+const RADIO_JER = Object.fromEntries(JERARQUIAS.map((j) => [j[0], j[2]]));
+const ETIQ_JER = Object.fromEntries(JERARQUIAS.map((j) => [j[0], j[1]]));
+const ROL_ETIQ = { origen: "Origen", destino: "Destino", ambos: "Origen y destino" };
+const descPeso = (p) => (p <= 2 ? "Muy baja atracción" : p <= 4 ? "Baja" : p <= 6 ? "Media" : p <= 8 ? "Alta" : "Muy alta");
+
+function normalizarAtr(a) {
+  let tipo = a.tipo;
+  if (tipo === "parque") tipo = "parque_urbano";
+  if (tipo === "espacio público" || tipo === "espacio_publico") tipo = "espacio_publico";
+  if (tipo === "estacion") tipo = "terminal";
+  if (tipo === "comercio") tipo = "centro_comercial";
+  if (!PESO_TIPO[tipo]) tipo = "otro";
+  const jer = a.jerarquia || (a.peso >= 9 ? "distrital" : "sectorial");
+  return { jerarquia: jer, radio: a.radio || RADIO_JER[jer], horario: a.horario || "", ...a, tipo };
+}
+
+/* ==================== estado ==================== */
 const estado = {
-  ciudad: null, esDemo: false, bbox: null, objetivo: "flujos",
-  capas: null, proyector: null, grafo: null,
+  ciudad: null, esDemo: false, bbox: null, lado: 2000,
+  capas: null, proyector: null, grafo: null, fechaOSM: null,
+  redQuitada: new Set(),           // índices de arista eliminados del proyecto
   escenarios: [], activo: 0,
-  modoClic: null,           // null | 'atractor'  (barreras: pestaña Barreras activa)
-  tab: "atractores",
-  vistaDiff: null,          // {a, b} índices comparados, o null = flujo del activo
+  modoClic: null, tab: "atractores", vistaDiff: false, selAtr: null,
+  estilo: "lienzo", claro: false,
 };
-const render = new Renderizador($("map"));
-render.onMovimiento = () => actualizarBbox();
-render.onClickMapa = (x, y) => clicEnMapa(x, y);
+const escActivo = () => estado.escenarios[estado.activo];
+function nuevoEscenario(nombre, base, atractores = []) {
+  return {
+    nombre,
+    atractores: base ? base.atractores.map((a) => ({ ...a })) : atractores,
+    barreras: base ? new Set(base.barreras) : new Set(),
+    resultado: null,
+  };
+}
+// clave estable de una arista (por extremos redondeados): sobrevive a re-descargas
+function claveArista(e) {
+  const g = estado.grafo, [ax, ay] = g.nodos[g.aristas[e].a], [bx, by] = g.nodos[g.aristas[e].b];
+  const k1 = Math.round(ax) + "," + Math.round(ay), k2 = Math.round(bx) + "," + Math.round(by);
+  return k1 < k2 ? k1 + "|" + k2 : k2 + "|" + k1;
+}
 
-// ---------- utilidades UI ----------
-function log(msg, esError = false) {
-  const div = document.createElement("div");
-  if (esError) div.className = "err";
-  div.textContent = "› " + msg;
-  $("log").prepend(div);
+/* ==================== utilidades ==================== */
+function log(msg, err = false) {
+  const d = document.createElement("div");
+  if (err) d.className = "err";
+  d.textContent = "› " + msg;
+  $("log-zona").prepend(d);
 }
-function progreso(idBarra, frac) {
-  const barra = $(idBarra);
-  barra.classList.toggle("oculto", frac == null);
-  if (frac != null) barra.firstElementChild.style.width = Math.round(frac * 100) + "%";
+function marcarPaso(n, hecho) {
+  const p = document.querySelector(`.paso[data-paso="${n}"]`);
+  p.classList.remove("bloqueado"); p.classList.toggle("hecho", hecho);
+  p.querySelector(".num").textContent = hecho ? "✓" : n;
 }
-function marcarPaso(n, opts = {}) {
-  const p = $("paso-" + n);
-  p.classList.remove("bloqueado");
-  p.classList.toggle("hecho", !!opts.hecho);
-  p.querySelector(".check").classList.toggle("oculto", !opts.hecho);
-  document.querySelectorAll(".paso").forEach((el) => el.classList.remove("activo"));
-  p.classList.add("activo");
+function bloquearPaso(n) {
+  const p = document.querySelector(`.paso[data-paso="${n}"]`);
+  p.classList.add("bloqueado"); p.classList.remove("hecho");
+  p.querySelector(".num").textContent = n;
 }
-function escenarioActivo() { return estado.escenarios[estado.activo]; }
+const fc = (features) => ({ type: "FeatureCollection", features });
+const lineaLL = (a, b) => {
+  const P = estado.proyector;
+  return { type: "LineString", coordinates: [P.aLonLat(a[0], a[1]), P.aLonLat(b[0], b[1])] };
+};
+function circleLL(cx, cy, r, n = 48) {
+  const P = estado.proyector, c = [];
+  for (let i = 0; i <= n; i++) { const a = (2 * Math.PI * i) / n; c.push(P.aLonLat(cx + r * Math.cos(a), cy + r * Math.sin(a))); }
+  return { type: "Polygon", coordinates: [c] };
+}
 
-// ---------- paso 1: proyecto y ciudad ----------
-async function buscar() {
-  const q = $("busqueda").value.trim();
-  if (!q) return;
-  $("resultados").innerHTML = "<li>Buscando…</li>";
+/* ==================== mapa ==================== */
+const mapa = new MapaUF({
+  contenedor: "mapa", idMinimapa: "minimapa",
+  idEscalaRegla: "escala-regla", idEscalaRotulos: "escala-rotulos", idNorte: "norte",
+  onClickSuelo: (lon, lat) => clicEnMapa(lon, lat),
+  onHover: (lon, lat, punto) => tooltipMapa(lon, lat, punto),
+  onListo: () => refrescarTodo(),
+});
+
+/* ==================== GeoJSON de la simulación ==================== */
+function gjRed() {
+  const g = estado.grafo; if (!g) return fc([]);
+  const f = [];
+  for (let e = 0; e < g.m; e++) {
+    if (estado.redQuitada.has(e)) continue;
+    f.push({ type: "Feature", properties: { nombre: g.aristas[e].nombre },
+      geometry: lineaLL(g.nodos[g.aristas[e].a], g.nodos[g.aristas[e].b]) });
+  }
+  return fc(f);
+}
+function gjQuitada() {
+  const g = estado.grafo; if (!g) return fc([]);
+  const f = [];
+  for (const e of estado.redQuitada)
+    f.push({ type: "Feature", properties: {}, geometry: lineaLL(g.nodos[g.aristas[e].a], g.nodos[g.aristas[e].b]) });
+  return fc(f);
+}
+function gjFlujo() {
+  const g = estado.grafo; if (!g) return fc([]);
+  const esc = escActivo(), res = esc && esc.resultado, f = [];
+  if (res && !estado.vistaDiff) {
+    const p95 = res.stats.p95 || 1;
+    for (let e = 0; e < g.m; e++) {
+      const c = res.conteo[e]; if (!c) continue;
+      const t = Math.min(1, c / p95);
+      f.push({ type: "Feature", properties: { t, c, nombre: g.aristas[e].nombre || "", color: rampaCss(t) },
+        geometry: lineaLL(g.nodos[g.aristas[e].a], g.nodos[g.aristas[e].b]) });
+    }
+  }
+  if (res && estado.vistaDiff && estado.escenarios.length > 1 &&
+      estado.escenarios[0].resultado && estado.escenarios[1].resultado) {
+    const c0 = estado.escenarios[0].resultado.conteo, c1 = estado.escenarios[1].resultado.conteo;
+    const deltas = [];
+    for (let e = 0; e < g.m; e++) { const d = Math.abs((c1[e] || 0) - (c0[e] || 0)); if (d > 0) deltas.push(d); }
+    deltas.sort((a, b) => a - b);
+    const p95 = deltas.length ? deltas[Math.floor(deltas.length * 0.95)] : 1;
+    for (let e = 0; e < g.m; e++) {
+      const d = (c1[e] || 0) - (c0[e] || 0); if (!d) continue;
+      const t = Math.min(1, Math.abs(d) / p95);
+      const color = d > 0 ? rampaCss(0.4 + 0.6 * t) : "rgb(90,150,210)";
+      f.push({ type: "Feature", properties: { t, c: d, nombre: g.aristas[e].nombre || "", color },
+        geometry: lineaLL(g.nodos[g.aristas[e].a], g.nodos[g.aristas[e].b]) });
+    }
+  }
+  return fc(f);
+}
+function gjBarreras() {
+  const g = estado.grafo; if (!g) return fc([]);
+  const f = [];
+  for (const e of escActivo().barreras) {
+    if (e >= g.m) continue;
+    f.push({ type: "Feature", properties: {}, geometry: lineaLL(g.nodos[g.aristas[e].a], g.nodos[g.aristas[e].b]) });
+  }
+  return fc(f);
+}
+function gjRadio() {
+  const a = estado.selAtr;
+  if (!a || !a.activo || !estado.proyector) return fc([]);
+  return fc([{ type: "Feature", properties: {}, geometry: circleLL(a.x, a.y, a.radio || 800) }]);
+}
+
+function actualizarFuentes() {
+  pintarMarcadores(); // los marcadores son DOM: independientes del estilo del mapa
+  if (!estado.grafo) return;
+  mapa.set("red", gjRed()); mapa.set("quitada", gjQuitada());
+  mapa.set("flujo", gjFlujo()); mapa.set("barreras", gjBarreras());
+  mapa.set("radio", gjRadio());
+}
+function pintarMarcadores() {
+  if (!mapa.map || !estado.proyector || !estado.escenarios.length) return;
+  const P = estado.proyector;
+  const lista = escActivo().atractores.filter((a) => a.activo).map((a) => ({
+    ref: a, lonlat: P.aLonLat(a.x, a.y), color: ROL_COLOR[a.rol], nombre: a.nombre, sel: a === estado.selAtr,
+  }));
+  mapa.setMarcadores(lista, {
+    onClick: (a) => seleccionarAtr(a),
+    onDragEnd: (a, lon, lat) => {
+      [a.x, a.y] = P.aXY(lon, lat);
+      escActivo().resultado = null;
+      log(`"${a.nombre}" reubicado — vuelve a correr la simulación.`);
+      guardarProyecto(); refrescarTodo();
+    },
+  });
+}
+
+/* ==================== ubicación y área de estudio ==================== */
+async function ejecutarBusqueda() {
+  const q = $("input-ciudad").value.trim(); if (!q) return;
+  const cont = $("res-ciudades");
+  cont.innerHTML = '<span class="nota">Buscando…</span>';
   try {
     const res = await buscarCiudad(q);
-    $("resultados").innerHTML = "";
-    if (!res.length) { $("resultados").innerHTML = "<li>Sin resultados</li>"; return; }
-    for (const r of res) {
-      const li = document.createElement("li");
-      li.textContent = r.nombre;
-      li.onclick = () => elegirCiudad({ nombre: r.nombre, lat: r.lat, lon: r.lon }, false);
-      $("resultados").appendChild(li);
+    cont.innerHTML = "";
+    if (!res.length) { cont.innerHTML = '<span class="nota">Sin resultados para «' + q + '».</span>'; return; }
+    for (const c of res.slice(0, 5)) {
+      const b = document.createElement("button");
+      const [n, ...resto] = c.nombre.split(",");
+      b.innerHTML = `<b>${n}</b><div class="sub">${resto.join(",").trim() || "&nbsp;"}</div>`;
+      b.onclick = () => elegirCiudad(c, false);
+      cont.appendChild(b);
     }
   } catch (e) {
-    log("Error en la búsqueda: " + e.message, true);
-    $("resultados").innerHTML = "";
+    cont.innerHTML = "";
+    log("Error en la búsqueda (Nominatim): " + e.message, true);
   }
 }
-
-function elegirCiudad(ciudad, esDemo) {
-  estado.ciudad = ciudad;
-  estado.esDemo = esDemo;
-  estado.capas = null; estado.grafo = null;
-  estado.escenarios = []; estado.activo = 0; estado.vistaDiff = null;
-  $("resultados").innerHTML = "";
-  const pill = $("ciudad-actual");
-  pill.textContent = "📍 " + ciudad.nombre;
-  pill.classList.remove("oculto");
-  $("hint").classList.add("oculto");
-  $("titulo-mapa").classList.add("oculto");
-  $("metabox").classList.add("oculto");
-  $("legend").classList.add("oculto");
-  $("panel-escenario").classList.add("oculto");
-  $("barra-resultados").classList.add("oculto");
-  $("chip-proyecto").classList.remove("oculto");
-  $("chip-proyecto-nombre").textContent = $("proyecto-nombre").value || "Mi estudio urbano";
-
-  if (esDemo) {
-    estado.bbox = DEMO_GYE.bbox;
-    const lado = ladoDeBbox(DEMO_GYE.bbox);
-    $("lado").value = lado;
-    const c = centroDeBbox(DEMO_GYE.bbox);
-    render.modoMapa(c.lat, c.lon, lado, { lat: c.lat, lon: c.lon });
-  } else {
-    render.modoMapa(ciudad.lat, ciudad.lon, parseInt($("lado").value, 10));
-  }
-  actualizarBbox();
-  marcarPaso(1, { hecho: true });
-  marcarPaso(2);
-  log("Ciudad: " + ciudad.nombre + " — mueve el mapa para centrar tu área y descarga los datos.");
+function elegirCiudad(c, esDemo) {
+  estado.ciudad = c; estado.esDemo = esDemo;
+  $("res-ciudades").innerHTML = "";
+  $("input-ciudad").value = c.nombre.split(",")[0];
+  $("ubicacion-actual").textContent = "Ubicación: " + c.nombre.split(",").slice(0, 2).join(",");
+  mapa.minimapaA(c.lon, c.lat);
+  mapa.volarA(c.lon, c.lat, 13.5);
+  $("btn-descargar").disabled = false;
+  $("estado-datos").textContent = "Ajusta el lado del área y descarga los datos OSM de la zona.";
+  log(`Ubicación fijada: ${c.nombre.split(",")[0]}. Define el área y descarga sus datos.`);
 }
 
-function actualizarBbox() {
+async function descargarDatos() {
   if (!estado.ciudad) return;
-  const lado = parseInt($("lado").value, 10);
-  $("lado-val").textContent = lado;
-  render.fijarLado(lado);
-  if (!estado.esDemo && render.modo === "mapa") {
-    const c = render.centroMapa();
-    estado.bbox = bboxDesdeCentro(c.lat, c.lon, lado);
-  }
-  const b = estado.bbox;
-  if (b) $("bbox-info").textContent =
-    `bbox: ${b.s.toFixed(4)}, ${b.w.toFixed(4)}, ${b.n.toFixed(4)}, ${b.e.toFixed(4)}`;
-}
-
-// ---------- paso 2: datos ----------
-async function cargarDatos() {
-  $("btn-datos").disabled = true;
-  actualizarBbox();
-  try {
-    const c = centroDeBbox(estado.bbox);
-    estado.proyector = crearProyector(c.lat, c.lon);
-    estado.grafo = null;
-    estado.vistaDiff = null;
-    render.flujo = null; render.atractores = []; render.fijarBarreras([]);
-
-    const acumulado = {};
-    const capas = await descargarCapas(
-      estado.bbox,
-      (msg, frac) => { log(msg); if (frac != null) progreso("prog-datos", frac); },
-      (parcial) => {
-        Object.assign(acumulado, parcial);
-        render.fijarCapas(acumulado, estado.proyector, estado.bbox);
-      }
-    );
-    estado.capas = capas;
-
-    const atractores = estado.esDemo
-      ? DEMO_GYE.atractores.map((a) => ({ ...a }))
-      : proponerAtractores(capas.pois);
-    if (estado.esDemo) {
-      const p = DEMO_GYE.params;
-      $("p-semilla").value = p.semilla; $("p-agentes").value = p.agentes;
-      $("p-ruido").value = p.ruido; $("p-cohortes").value = p.cohortes;
-    }
-    if (!estado.escenarios.length) {
-      estado.escenarios = [{ id: 1, nombre: "Escenario actual 01", atractores, barreras: [], resultado: null }];
-      estado.activo = 0;
-    }
-
-    $("resumen-datos").classList.remove("oculto");
-    $("resumen-datos").innerHTML =
-      `<b>${capas.roads.length + capas.pednet.length}</b> segmentos de red · ` +
-      `<b>${capas.buildings.length}</b> edificios · <b>${capas.parks.length}</b> parques · ` +
-      `OSM ${capas.fechaOSM}`;
-    $("leg-meta").textContent =
-      `Fuente: OpenStreetMap (${capas.fechaOSM}) · Modelo proxy OD — exploratorio`;
-
-    $("titulo-mapa").classList.remove("oculto");
-    $("subtitulo-mapa").textContent = estado.ciudad.nombre;
-    $("panel-escenario").classList.remove("oculto");
-    $("legend").classList.remove("oculto");
-    marcarPaso(2, { hecho: true });
-    marcarPaso(3);
-    aplicarObjetivo();
-    pintarEscenarios();
-    pintarTabla();
-    pintarBarreras();
-    refrescarAtractores();
-    log(`Datos listos. Revisa atractores y roles${estado.esDemo ? " (pesos validados de GYE)" : ""}, luego corre la simulación.`);
-  } catch (e) {
-    log("Error descargando OSM: " + e.message, true);
-  } finally {
-    $("btn-datos").disabled = false;
-    progreso("prog-datos", null);
-  }
-}
-
-function aplicarObjetivo() {
-  estado.objetivo = $("objetivo").value;
-  const guias = {
-    flujos: "Configura atractores y roles; el resultado clave es el mapa de intensidad.",
-    accesibilidad: "Marca tus orígenes (rol origen) y mira el KPI de accesibilidad 10 min.",
-    congestion: "Corre la simulación y revisa el tramo más cargado y el flujo máximo.",
-    propuesta: "Corre el escenario actual, luego pulsa ⧉ Proponer, añade barreras (clic en calles) y compara.",
+  const btn = $("btn-descargar");
+  btn.disabled = true; btn.textContent = "Descargando…";
+  const prog = $("prog-datos"); prog.classList.remove("oculto");
+  const onStatus = (msg, f) => {
+    $("estado-datos").textContent = msg;
+    if (f != null) prog.firstElementChild.style.width = Math.round(f * 100) + "%";
   };
-  $("estado-escenario").textContent = guias[estado.objetivo] || guias.flujos;
-}
+  try {
+    estado.bbox = estado.esDemo ? DEMO_GYE.bbox
+      : bboxDesdeCentro(estado.ciudad.lat, estado.ciudad.lon, estado.lado);
+    const centro = centroDeBbox(estado.bbox);
+    estado.proyector = crearProyector(centro.lat, centro.lon);
+    marcarPaso(2, false);
 
-// ---------- paso 3: escenarios ----------
-function pintarEscenarios() {
-  const sel = $("sel-escenario");
-  sel.innerHTML = "";
-  estado.escenarios.forEach((esc, i) => {
-    const o = document.createElement("option");
-    o.value = i;
-    o.textContent = esc.nombre + (esc.resultado ? " ✓" : "");
-    sel.appendChild(o);
-  });
-  sel.value = estado.activo;
-  // selectores de comparación
-  const conRes = estado.escenarios.map((e, i) => ({ e, i })).filter((x) => x.e.resultado);
-  for (const id of ["comp-a", "comp-b"]) {
-    const s = $(id);
-    s.innerHTML = "";
-    for (const { e, i } of conRes) {
-      const o = document.createElement("option");
-      o.value = i; o.textContent = e.nombre;
-      s.appendChild(o);
+    const capasParciales = {};
+    const capas = await descargarCapas(estado.bbox, onStatus, (parte) => {
+      Object.assign(capasParciales, parte);
+      mapa.setContexto(capasParciales);       // el contexto se pinta progresivamente
+    });
+    estado.capas = capas; estado.fechaOSM = capas.fechaOSM;
+    mapa.setContexto(capas);
+
+    onStatus("Construyendo el grafo caminable…", 0.95);
+    estado.grafo = construirGrafo([capas.roads, capas.pednet], estado.proyector);
+    if (!estado.grafo.m) throw new Error("La zona no tiene red caminable en OSM. Prueba un área mayor u otra ubicación.");
+    estado.redQuitada.clear();
+    remapearGuardado();
+
+    if (!estado.escenarios.length) {
+      const base = estado.esDemo
+        ? DEMO_GYE.atractores.map((a) => aAtractorXY(a))
+        : proponerAtractores(capas.pois).map((a) => aAtractorXY(a));
+      estado.escenarios = [nuevoEscenario("Escenario 01 — actual", null, base)];
+      estado.activo = 0;
+      if (estado.esDemo) {
+        const p = DEMO_GYE.params;
+        $("p-agentes").value = p.agentes; $("p-ruido").value = p.ruido;
+        $("v-ruido").textContent = p.ruido.toFixed(2);
+        $("p-cohortes").value = p.cohortes; $("p-semilla").value = p.semilla;
+      }
+    } else {
+      for (const esc of estado.escenarios) esc.resultado = null;
     }
+
+    mapa.encuadrarBbox(estado.bbox);
+    marcarPaso(2, true); marcarPaso(3, false); marcarPaso(4, false);
+    $("btn-correr").disabled = false;
+    pintarLista(); pintarBarreras(); pintarRed(); refrescarTodo(); guardarProyecto();
+    log(`Datos reales cargados (OSM ${estado.fechaOSM}): ${estado.grafo.m} tramos y ${estado.grafo.n} nodos caminables. La simulación correrá sobre las calles reales.`);
+  } catch (e) {
+    log("No se pudieron descargar los datos: " + e.message, true);
+    $("estado-datos").textContent = "";
   }
-  if (conRes.length >= 2) { $("comp-a").value = conRes[0].i; $("comp-b").value = conRes[conRes.length - 1].i; }
-  $("btn-comparar").disabled = conRes.length < 2;
+  prog.classList.add("oculto");
+  btn.textContent = "⤓ Descargar datos de esta zona"; btn.disabled = !estado.ciudad;
+}
+function aAtractorXY(a) {
+  const [x, y] = estado.proyector.aXY(a.lon, a.lat);
+  return normalizarAtr({ ...a, x, y, activo: a.activo !== false });
+}
+function cargarDemo() {
+  const centro = centroDeBbox(DEMO_GYE.bbox);
+  estado.escenarios = []; estado.activo = 0; estado.selAtr = null;
+  elegirCiudad({ nombre: DEMO_GYE.nombre, lat: centro.lat, lon: centro.lon }, true);
+  descargarDatos();
 }
 
-function cambiarEscenario(i) {
-  estado.activo = i;
-  estado.vistaDiff = null;
-  $("btn-ver-flujo").classList.add("oculto");
-  pintarTabla();
-  pintarBarreras();
-  refrescarAtractores();
-  const esc = escenarioActivo();
-  if (esc.resultado) {
-    render.fijarFlujo(estado.grafo, esc.resultado.conteo, esc.resultado.stats.p95);
-    pintarKPIs(esc);
-    actualizarMetabox();
-  } else {
-    render.flujo = null;
-    $("metabox").classList.add("oculto");
+/* ==================== interacción sobre el mapa ==================== */
+const aristaCerca = (x, y, umbral) => {
+  const r = aristaMasCercana(estado.grafo, x, y);
+  return r.dist <= umbral ? r.e : -1;
+};
+function puntoEnAnillo(lon, lat, anillo) {
+  let dentro = false;
+  for (let i = 0, j = anillo.length - 1; i < anillo.length; j = i++) {
+    const [xi, yi] = anillo[i], [xj, yj] = anillo[j];
+    if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) dentro = !dentro;
   }
-  render.dibujar();
-  log("Editando: " + esc.nombre);
+  return dentro;
+}
+function centroideAnillo(anillo) {
+  let sx = 0, sy = 0;
+  for (const [x, y] of anillo) { sx += x; sy += y; }
+  return [sx / anillo.length, sy / anillo.length];
+}
+// Reconocimiento del lugar bajo el clic (parque / plaza / edificio de OSM).
+// Solo aporta nombre, tipo y peso sugerido: el atractor queda como PUNTO.
+function geometriaEnPunto(lon, lat) {
+  const capas = estado.capas; if (!capas) return null;
+  const P = estado.proyector;
+  const busca = (lista, clasifica) => {
+    for (const p of lista || []) {
+      if (!puntoEnAnillo(lon, lat, p.anillos[0])) continue;
+      const [clon, clat] = centroideAnillo(p.anillos[0]);
+      return { ...clasifica(p), lon: clon, lat: clat };
+    }
+    return null;
+  };
+  const areaM2 = (p) => {
+    const pts = p.anillos[0].map(([lo, la]) => P.aXY(lo, la));
+    let a = 0;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++)
+      a += (pts[j][0] + pts[i][0]) * (pts[j][1] - pts[i][1]);
+    return Math.abs(a / 2);
+  };
+  return (
+    busca(capas.parks, (p) => ({
+      nombre: p.tags.name || "Parque",
+      tipo: areaM2(p) < 20000 ? "parque_pequeno" : "parque_urbano" })) ||
+    busca(capas.squares, (p) => ({ nombre: p.tags.name || "Plaza", tipo: "plaza" })) ||
+    busca(capas.buildings, (p) => ({ nombre: p.tags.name || "Edificio", tipo: "edificio" }))
+  );
 }
 
-function duplicarEscenario() {
-  const base = escenarioActivo();
-  const n = estado.escenarios.length + 1;
-  estado.escenarios.push({
-    id: n,
-    nombre: `Escenario propuesto 0${n}`,
-    atractores: base.atractores.map((a) => ({ ...a })),
-    barreras: base.barreras.map((b) => ({ ...b })),
-    resultado: null,
-  });
-  pintarEscenarios();
-  $("sel-escenario").value = estado.escenarios.length - 1;
-  cambiarEscenario(estado.escenarios.length - 1);
-  cambiarTab("barreras");
-  log("Escenario propuesto creado: haz clic en calles del mapa para bloquear tramos, o ajusta pesos.");
-}
-
-function cambiarTab(tab) {
-  estado.tab = tab;
-  document.querySelectorAll(".tab").forEach((t) =>
-    t.classList.toggle("activo", t.dataset.tab === tab));
-  $("tab-atractores").classList.toggle("oculto", tab !== "atractores");
-  $("tab-barreras").classList.toggle("oculto", tab !== "barreras");
-  estado.modoClic = null;
-  $("btn-agregar-atractor").classList.remove("activo-modo");
-  $("map").classList.toggle("modo-clic", tab === "barreras");
-}
-
-function pintarTabla() {
-  const tbody = $("tabla-atractores").querySelector("tbody");
-  tbody.innerHTML = "";
-  escenarioActivo().atractores.forEach((a) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML =
-      `<td><input type="checkbox" ${a.activo ? "checked" : ""} title="Incluir en la simulación"></td>` +
-      `<td><input type="text" value="${a.nombre.replace(/"/g, "&quot;")}"></td>` +
-      `<td><select><option value="ambos">O+D</option><option value="origen">Origen</option><option value="destino">Destino</option></select></td>` +
-      `<td><input type="number" min="1" max="10" value="${a.peso}"></td>`;
-    const [chk, nom, peso] = tr.querySelectorAll("input");
-    const rol = tr.querySelector("select");
-    rol.value = a.rol || "ambos";
-    chk.onchange = () => { a.activo = chk.checked; refrescarAtractores(); };
-    nom.onchange = () => { a.nombre = nom.value; refrescarAtractores(); };
-    rol.onchange = () => { a.rol = rol.value; refrescarAtractores(); };
-    peso.onchange = () => { a.peso = Math.max(1, Math.min(10, parseInt(peso.value, 10) || 1)); };
-    tbody.appendChild(tr);
-  });
-}
-
-function refrescarAtractores() {
-  if (!estado.proyector) return;
-  render.fijarAtractores(escenarioActivo().atractores, estado.proyector);
-  render.dibujar();
-}
-
-function pintarBarreras() {
-  const esc = escenarioActivo();
-  const ul = $("lista-barreras");
-  ul.innerHTML = "";
-  if (!esc.barreras.length) {
-    ul.innerHTML = '<li class="dim">Sin barreras en este escenario.</li>';
-  } else {
-    esc.barreras.forEach((b, i) => {
-      const li = document.createElement("li");
-      li.innerHTML = `<span>⛔ <b>${b.nombre || "tramo sin nombre"}</b></span>`;
-      const btn = document.createElement("button");
-      btn.textContent = "✕"; btn.title = "Quitar barrera";
-      btn.onclick = () => { esc.barreras.splice(i, 1); pintarBarreras(); };
-      li.appendChild(btn);
-      ul.appendChild(li);
-    });
-  }
-  if (estado.grafo) {
-    render.fijarBarreras(esc.barreras.map((b) => {
-      const { a: na, b: nb } = estado.grafo.aristas[b.e];
-      const [x1, y1] = estado.grafo.nodos[na], [x2, y2] = estado.grafo.nodos[nb];
-      return { x1, y1, x2, y2 };
-    }));
-    render.dibujar();
-  }
-}
-
-function asegurarGrafo() {
-  if (!estado.grafo) {
-    estado.grafo = construirGrafo([estado.capas.pednet, estado.capas.roads], estado.proyector);
-    log(`Grafo caminable: ${estado.grafo.n} nodos, ${estado.grafo.m} aristas.`);
-  }
-  return estado.grafo;
-}
-
-function clicEnMapa(x, y) {
-  if (!estado.capas) return;
+function clicEnMapa(lon, lat) {
+  if (!estado.grafo) return;
+  const P = estado.proyector, esc = escActivo();
+  const [x, y] = P.aXY(lon, lat);
   if (estado.modoClic === "atractor") {
-    const [lon, lat] = estado.proyector.aLonLat(x, y);
-    escenarioActivo().atractores.push({
-      nombre: "Nuevo punto", tipo: "manual", rol: "ambos", peso: 5, lon, lat, activo: true,
-    });
-    estado.modoClic = null;
-    $("btn-agregar-atractor").classList.remove("activo-modo");
-    $("map").classList.remove("modo-clic");
-    pintarTabla(); refrescarAtractores();
-    log("Punto añadido — edita su nombre, rol y atracción en la tabla.");
+    const geo = geometriaEnPunto(lon, lat);
+    const tipo = geo ? geo.tipo : "otro";
+    const [gx, gy] = geo ? P.aXY(geo.lon, geo.lat) : [x, y];
+    const nuevo = normalizarAtr({
+      nombre: geo ? geo.nombre : "Nuevo atractor",
+      tipo, rol: "ambos", peso: PESO_TIPO[tipo], x: gx, y: gy, activo: true });
+    esc.atractores.push(nuevo);
+    esc.resultado = null; fijarModo(null); pintarLista();
+    seleccionarAtr(nuevo);
+    refrescarTodo(); guardarProyecto();
+    log(geo
+      ? `Atractor creado: ${nuevo.nombre} — lugar reconocido (${ETIQ_TIPO[tipo]}, peso sugerido ${nuevo.peso}).`
+      : `Atractor creado (peso sugerido ${nuevo.peso}). Descríbelo en el panel.`);
     return;
   }
+  if (estado.tab === "atractores" && !estado.modoClic && estado.selAtr) { seleccionarAtr(null); return; }
   if (estado.tab === "barreras") {
-    const grafo = asegurarGrafo();
-    const { e, dist } = aristaMasCercana(grafo, x, y);
-    if (e < 0 || dist > 20) return;
-    const esc = escenarioActivo();
-    const ya = esc.barreras.findIndex((b) => b.e === e);
-    if (ya >= 0) { esc.barreras.splice(ya, 1); log("Barrera quitada."); }
-    else {
-      esc.barreras.push({ e, nombre: grafo.aristas[e].nombre });
-      log(`Tramo bloqueado: ${grafo.aristas[e].nombre || "(sin nombre)"}.`);
-    }
-    pintarBarreras();
+    const e = aristaCerca(x, y, 28); if (e < 0) return;
+    if (esc.barreras.has(e)) esc.barreras.delete(e); else esc.barreras.add(e);
+    esc.resultado = null; pintarBarreras(); refrescarTodo(); guardarProyecto();
+    return;
+  }
+  if (estado.tab === "red") {
+    const e = aristaCerca(x, y, 28); if (e < 0) return;
+    if (estado.redQuitada.has(e)) estado.redQuitada.delete(e); else estado.redQuitada.add(e);
+    for (const s of estado.escenarios) s.resultado = null;
+    pintarRed(); pintarBarreras(); refrescarTodo(); guardarProyecto();
+    log("Red peatonal corregida — vuelve a correr la simulación en cada escenario.");
   }
 }
+function tooltipMapa(lon, lat, punto) {
+  const tip = $("tooltip-mapa");
+  const res = estado.grafo && escActivo() && escActivo().resultado;
+  if (!res || estado.vistaDiff) { tip.classList.add("oculto"); return; }
+  const [x, y] = estado.proyector.aXY(lon, lat);
+  const e = aristaCerca(x, y, 20);
+  if (e >= 0 && res.conteo[e] > 0) {
+    tip.classList.remove("oculto");
+    tip.style.left = punto.x + 14 + "px"; tip.style.top = punto.y + 14 + "px";
+    tip.textContent = `${estado.grafo.aristas[e].nombre || "(sin nombre)"} · ${res.conteo[e]} pasos`;
+  } else tip.classList.add("oculto");
+}
 
-// ---------- paso 4: simulación ----------
+/* ==================== panel del atractor ==================== */
+function seleccionarAtr(a, abrir = true) {
+  estado.selAtr = a;
+  actualizarFuentes();
+  if (a && abrir) abrirPanelAtr(a);
+  if (!a) $("panel-atr").classList.add("oculto");
+}
+function abrirPanelAtr(a) {
+  $("pa-titulo").textContent = a.nombre || "Atractor";
+  $("pa-nombre").value = a.nombre;
+  $("pa-tipo").value = a.tipo;
+  $("pa-jer").value = a.jerarquia;
+  $("pa-peso").value = a.peso;
+  $("pa-peso-desc").textContent = a.peso + " — " + descPeso(a.peso);
+  $("pa-radio").value = a.radio;
+  $("pa-horario").value = a.horario || "";
+  $("pa-rol").value = a.rol;
+  $("panel-atr").classList.remove("oculto");
+}
+function cambioAtr() { escActivo().resultado = null; pintarLista(); refrescarTodo(); guardarProyecto(); }
+function iniciarPanelAtr() {
+  $("pa-tipo").innerHTML = TIPOS.map(([v, e]) => `<option value="${v}">${e}</option>`).join("");
+  $("pa-jer").innerHTML = JERARQUIAS.map(([v, e, r]) =>
+    `<option value="${v}">${e} (~${r >= 1000 ? r / 1000 + " km" : r + " m"})</option>`).join("");
+  const conSel = (fn) => (ev) => { const a = estado.selAtr; if (a) fn(a, ev); };
+  $("pa-nombre").addEventListener("change", conSel((a, ev) => {
+    a.nombre = ev.target.value.trim() || a.nombre; $("pa-titulo").textContent = a.nombre; cambioAtr(); }));
+  $("pa-tipo").addEventListener("change", conSel((a, ev) => {  // el tipo propone el peso
+    a.tipo = ev.target.value; a.peso = PESO_TIPO[a.tipo];
+    $("pa-peso").value = a.peso; $("pa-peso-desc").textContent = a.peso + " — " + descPeso(a.peso);
+    cambioAtr(); }));
+  $("pa-jer").addEventListener("change", conSel((a, ev) => {   // la jerarquía propone el radio
+    a.jerarquia = ev.target.value; a.radio = RADIO_JER[a.jerarquia];
+    $("pa-radio").value = a.radio; cambioAtr(); }));
+  $("pa-peso").addEventListener("input", conSel((a, ev) => {
+    a.peso = +ev.target.value; $("pa-peso-desc").textContent = a.peso + " — " + descPeso(a.peso); }));
+  $("pa-peso").addEventListener("change", conSel(() => cambioAtr()));
+  $("pa-radio").addEventListener("change", conSel((a, ev) => {
+    a.radio = Math.max(100, Math.min(10000, +ev.target.value || a.radio));
+    ev.target.value = a.radio; cambioAtr(); }));
+  $("pa-horario").addEventListener("change", conSel((a, ev) => { a.horario = ev.target.value.trim(); guardarProyecto(); }));
+  $("pa-rol").addEventListener("change", conSel((a, ev) => { a.rol = ev.target.value; cambioAtr(); }));
+  $("pa-cerrar").onclick = () => seleccionarAtr(null);   // el marcador permanece
+  $("pa-listo").onclick = () => seleccionarAtr(null);
+  $("pa-eliminar").onclick = () => { const a = estado.selAtr; if (a) eliminarAtr(a); };
+  document.addEventListener("keydown", (ev) => {          // Supr elimina el seleccionado
+    if (ev.key !== "Delete" && ev.key !== "Backspace") return;
+    const t = document.activeElement;
+    if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    if (estado.selAtr) { ev.preventDefault(); eliminarAtr(estado.selAtr); }
+  });
+}
+function eliminarAtr(a) {
+  const esc = escActivo();
+  esc.atractores = esc.atractores.filter((x) => x !== a);
+  if (estado.selAtr === a) estado.selAtr = null;
+  $("panel-atr").classList.add("oculto");
+  esc.resultado = null; pintarLista(); refrescarTodo(); guardarProyecto();
+  log(`Atractor "${a.nombre}" eliminado.`);
+}
+
+/* ==================== listas laterales ==================== */
+function pintarLista() {
+  const cont = $("lista-atr"); cont.innerHTML = "";
+  if (!estado.escenarios.length) return;
+  escActivo().atractores.forEach((a) => {
+    const div = document.createElement("div"); div.className = "item-atr";
+    div.style.cursor = "pointer";
+    div.innerHTML = `<span class="punto" style="background:${ROL_COLOR[a.rol]}"></span>
+      <div class="info"><div class="n">${a.nombre}</div>
+      <div class="m">${ETIQ_TIPO[a.tipo] || a.tipo} · ${ETIQ_JER[a.jerarquia] || ""} · peso ${a.peso} (${descPeso(a.peso)}) · ${ROL_ETIQ[a.rol]}</div></div>
+      <button class="icono" title="Eliminar">✕</button>`;
+    div.onclick = () => {   // como en Google Maps: centra, resalta y abre el formulario
+      const [lon, lat] = estado.proyector.aLonLat(a.x, a.y);
+      mapa.map.easeTo({ center: [lon, lat], duration: 500 });
+      seleccionarAtr(a);
+    };
+    div.querySelector(".icono").onclick = (ev) => { ev.stopPropagation(); eliminarAtr(a); };
+    cont.appendChild(div);
+  });
+}
+function pintarOD() {
+  if (!estado.escenarios.length) return;
+  const esc = escActivo(), t = $("tabla-od");
+  const O = esc.atractores.filter((a) => a.activo && a.rol !== "destino");
+  const D = esc.atractores.filter((a) => a.activo && a.rol !== "origen");
+  const pares = [];
+  for (const o of O) for (const d of D) { if (o === d) continue; pares.push({ o, d, v: o.peso * d.peso }); }
+  pares.sort((a, b) => b.v - a.v);
+  const max = pares[0]?.v || 1;
+  t.innerHTML = "<tr><th>Origen</th><th>Destino</th><th style='text-align:right'>Intensidad</th></tr>" +
+    pares.slice(0, 10).map((p) => {
+      const r = p.v / max, cls = r > 0.7 ? "alta" : r > 0.4 ? "media" : "baja", et = r > 0.7 ? "Alta" : r > 0.4 ? "Media" : "Baja";
+      return `<tr><td>${p.o.nombre}</td><td>${p.d.nombre}</td><td style="text-align:right"><span class="badge ${cls}">${et}</span></td></tr>`;
+    }).join("");
+}
+function pintarBarreras() {
+  const el = $("lista-barr");
+  if (!estado.grafo || !estado.escenarios.length) { el.textContent = "Sin barreras."; return; }
+  const esc = escActivo(), g = estado.grafo;
+  if (!esc.barreras.size) { el.textContent = "Sin barreras."; return; }
+  el.innerHTML = [...esc.barreras].map((e) => (e < g.m ? `• ${g.aristas[e].nombre || "(sin nombre)"} — bloqueado` : "")).join("<br>");
+}
+function pintarRed() {
+  $("lista-red").textContent = estado.redQuitada.size
+    ? `${estado.redQuitada.size} tramo(s) eliminados del proyecto.` : "Sin correcciones.";
+}
+
+/* ==================== simulación ==================== */
 function leerParams() {
   return {
-    semilla: parseInt($("p-semilla").value, 10) || 42,
-    agentes: parseInt($("p-agentes").value, 10) || 2048,
-    ruido: parseFloat($("p-ruido").value) || 0.25,
-    cohortes: parseInt($("p-cohortes").value, 10) || 8,
+    agentes: Math.max(100, +$("p-agentes").value || 2048),
+    ruido: +$("p-ruido").value,
+    cohortes: Math.max(1, +$("p-cohortes").value || 8),
+    semilla: Math.max(1, +$("p-semilla").value || 42),
   };
 }
-
-async function simular() {
-  $("btn-simular").disabled = true;
-  const esc = escenarioActivo();
+let corriendo = false;
+async function correrSimulacion() {
+  if (corriendo || !estado.grafo) return;
+  corriendo = true;
+  const btn = $("btn-correr"); btn.disabled = true; btn.textContent = "Simulando…";
+  const esc = escActivo();
+  const prog = $("prog-sim"); prog.classList.remove("oculto");
+  const t0 = performance.now();
   try {
-    const grafo = asegurarGrafo();
-    const params = leerParams();
-    const barreras = new Set(esc.barreras.map((b) => b.e));
-    const activos = esc.atractores
-      .filter((a) => a.activo)
-      .map((a) => {
-        const [x, y] = estado.proyector.aXY(a.lon, a.lat);
-        return { ...a, x, y };
-      });
-    log(`Simulando "${esc.nombre}": ${params.agentes} peatones, semilla ${params.semilla}…`);
-    const t0 = performance.now();
+    const bloqueadas = new Set([...esc.barreras, ...estado.redQuitada]); // barreras + red corregida
     const res = await correrModelo({
-      grafo, atractores: activos, params, barreras,
-      onProgreso: (f) => progreso("prog-sim", f),
+      grafo: estado.grafo, atractores: esc.atractores, params: leerParams(), barreras: bloqueadas,
+      onProgreso: (f, txt) => {
+        prog.firstElementChild.style.width = Math.round(f * 100) + "%";
+        $("estado-sim").textContent = `Calculando rutas — ${txt} (${Math.round(f * 100)} %)`;
+      },
     });
-    // accesibilidad 10 min desde los orígenes
-    const nodosOrigen = res.amarres.filter((a) => a.rol !== "destino").map((a) => a.nodo);
-    const acc = accesibilidad(grafo, nodosOrigen, barreras, 10);
-    esc.resultado = { conteo: res.conteo, stats: res.stats, acc, params,
-      fecha: new Date().toISOString().slice(0, 10) };
+    const nodosO = res.amarres.filter((a) => a.rol !== "destino").map((a) => a.nodo);
+    res.acc10 = accesibilidad(estado.grafo, nodosO, bloqueadas, 10);
+    esc.resultado = res; estado.vistaDiff = false;
     const seg = ((performance.now() - t0) / 1000).toFixed(1);
+    $("estado-sim").textContent = "";
+    log(`Simulación de "${esc.nombre}" completada en ${seg} s — ${res.stats.rutasOk.toLocaleString("es-EC")} rutas trazadas` +
+      (res.stats.sinRuta ? `, ${res.stats.sinRuta} sin ruta posible (revisa barreras o conectividad).` : "."));
+    marcarPaso(4, true);
+  } catch (e) { log(e.message, true); $("estado-sim").textContent = ""; }
+  prog.classList.add("oculto");
+  btn.disabled = false; btn.textContent = "Correr simulación ▶"; corriendo = false;
+  refrescarTodo();
+}
 
-    estado.vistaDiff = null;
-    $("btn-ver-flujo").classList.add("oculto");
-    render.fijarFlujo(grafo, res.conteo, res.stats.p95);
-    refrescarAtractores();
-    render.dibujar();
-
-    const s = res.stats;
-    $("stats").textContent =
-      `${s.aristasConFlujo} tramos con flujo · ${s.sinRuta ? s.sinRuta + " peatones sin ruta · " : ""}${seg}s`;
-    $("estado-simulacion").textContent =
-      `Última corrida: ${esc.nombre} (${seg}s, semilla ${params.semilla}).`;
-    log(`Simulación de "${esc.nombre}" lista en ${seg}s.`);
-    marcarPaso(3, { hecho: true });
-    marcarPaso(4, { hecho: true });
-    marcarPaso(5);
-    pintarKPIs(esc);
-    pintarEscenarios();
-    actualizarMetabox();
-    $("barra-resultados").classList.remove("oculto");
-  } catch (e) {
-    log("Error en la simulación: " + e.message, true);
-  } finally {
-    $("btn-simular").disabled = false;
-    progreso("prog-sim", null);
+/* ==================== cabecera, KPIs, comparación ==================== */
+function refrescarCabecera() {
+  const esc = estado.escenarios.length ? escActivo() : null, g = estado.grafo;
+  $("nombre-escenario").textContent = esc ? esc.nombre : "Sin datos";
+  if (g && estado.bbox) {
+    const km2 = ((estado.lado * estado.lado) / 1e6).toFixed(1);
+    $("meta-escenario").textContent = `Área: ~${km2} km² · Red: ${g.m} tramos · Nodos: ${g.n}`;
+    $("resumen-datos").textContent =
+      `${g.m} tramos, ${g.n} nodos, ${estado.capas.buildings.length} edificios · OSM ${estado.fechaOSM}`;
+  } else {
+    $("meta-escenario").textContent = "Busca una ciudad y descarga sus datos, o carga el caso validado.";
+    $("resumen-datos").textContent = "—";
   }
+  $("btn-ver-diff").classList.toggle("oculto",
+    !(estado.escenarios.length > 1 && estado.escenarios[0].resultado && estado.escenarios[1].resultado));
+  $("btn-ver-diff").textContent = estado.vistaDiff ? "Ver flujo del escenario" : "Ver diferencia en el mapa";
 }
-
-// ---------- paso 5: resultados ----------
-function pintarKPIs(esc) {
-  const s = esc.resultado.stats;
-  $("kpi-max").textContent = s.max;
-  $("kpi-prom").textContent = s.flujoProm.toFixed(1);
-  $("kpi-tiempo").textContent = s.tiempoMedioMin.toFixed(1);
-  $("kpi-dist").textContent = Math.round(s.distMediaM);
-  $("kpi-tramo").textContent = s.tramoTop ? s.tramoTop.nombre : "—";
-  $("kpi-tramo-flujo").textContent = s.tramoTop ? s.tramoTop.flujo + " pasadas" : "";
-  $("kpi-acc").textContent = esc.resultado.acc.toFixed(0) + "%";
+function refrescarKPIs() {
+  const res = estado.escenarios.length && escActivo().resultado;
+  const f = (v, d = 1) => (v == null ? "—" : Number(v).toLocaleString("es-EC", { maximumFractionDigits: d }));
+  if (!res) {
+    for (const id of ["k-max", "k-prom", "k-tiempo", "k-dist", "k-acc"]) $(id).textContent = "—";
+    $("k-top").textContent = "—"; $("rango-max").textContent = "—";
+    bloquearPaso(5);
+    return;
+  }
+  $("k-max").textContent = f(res.stats.max, 0);
+  $("k-prom").textContent = f(res.stats.flujoProm, 1);
+  $("k-tiempo").textContent = f(res.stats.tiempoMedioMin, 1);
+  $("k-dist").textContent = f(res.stats.distMediaM, 0);
+  $("k-top").textContent = res.stats.tramoTop ? `${res.stats.tramoTop.nombre} · ${f(res.stats.tramoTop.flujo, 0)} pasos` : "—";
+  $("k-acc").textContent = f(res.acc10, 0);
+  $("rango-max").textContent = "p95 = " + f(res.stats.p95, 0);
+  marcarPaso(5, true);
 }
-
-function compararEscenarios() {
-  const ia = parseInt($("comp-a").value, 10), ib = parseInt($("comp-b").value, 10);
-  if (ia === ib) { log("Elige dos escenarios distintos para comparar.", true); return; }
-  const A = estado.escenarios[ia], B = estado.escenarios[ib];
-  estado.vistaDiff = { a: ia, b: ib };
-  render.fijarDiff(estado.grafo, A.resultado.conteo, B.resultado.conteo);
-  render.dibujar();
-  $("btn-ver-flujo").classList.remove("oculto");
-  const d = (va, vb, unidad, invertido = false) => {
-    const delta = vb - va;
-    const pct = va ? Math.round((delta / va) * 100) : 0;
-    const clase = delta === 0 ? "neutro" : (delta > 0) !== invertido ? "sube" : "baja";
-    const signo = delta > 0 ? "+" : "";
-    return `<span class="delta ${clase}">${unidad}<b>${signo}${pct}%</b></span>`;
+function refrescarComparacion() {
+  const zona = $("comparacion"), fila = $("comp-fila");
+  const listos = estado.escenarios.filter((e) => e.resultado);
+  if (estado.escenarios.length < 2 || listos.length < 2) { zona.classList.add("oculto"); return; }
+  zona.classList.remove("oculto"); fila.innerHTML = "";
+  const [a, b] = estado.escenarios;
+  for (const [i, e] of [[0, a], [1, b]]) {
+    const div = document.createElement("button");
+    div.className = "comp-esc" + (estado.activo === i ? " sel" : "");
+    div.innerHTML = `<b>${e.nombre}</b><div class="s">${i === 0 ? "base" : "vs base"}</div>`;
+    div.onclick = () => { estado.activo = i; estado.vistaDiff = false; pintarLista(); pintarBarreras(); refrescarTodo(); };
+    fila.appendChild(div);
+  }
+  const delta = (et, va, vb, unidad, mejorSube) => {
+    const d = va ? ((vb - va) / va) * 100 : 0;
+    const cls = Math.abs(d) < 1 ? "neu" : (d > 0) === mejorSube ? "pos" : "neg";
+    const div = document.createElement("div"); div.className = "delta";
+    div.innerHTML = `<div class="e">${et}</div><div class="v">${va.toLocaleString("es-EC", { maximumFractionDigits: 1 })} → ${vb.toLocaleString("es-EC", { maximumFractionDigits: 1 })} ${unidad}</div><div class="d ${cls}">${d > 0 ? "+" : ""}${d.toFixed(0)} %</div>`;
+    fila.appendChild(div);
   };
-  const sa = A.resultado.stats, sb = B.resultado.stats;
-  $("comp-deltas").innerHTML =
-    d(sa.flujoProm, sb.flujoProm, "flujo prom. ") +
-    d(sa.tiempoMedioMin, sb.tiempoMedioMin, "tiempo ") +
-    d(A.resultado.acc, B.resultado.acc, "accesibilidad ", true) +
-    `<span class="delta neutro">cálido = gana flujo · azul = pierde</span>`;
-  log(`Comparando: ${A.nombre} → ${B.nombre} (misma semilla = diferencia atribuible a tu propuesta).`);
+  delta("Flujo promedio", a.resultado.stats.flujoProm, b.resultado.stats.flujoProm, "pasos", true);
+  delta("Tiempo medio", a.resultado.stats.tiempoMedioMin, b.resultado.stats.tiempoMedioMin, "min", false);
+  delta("Accesibilidad 10 min", a.resultado.acc10, b.resultado.acc10, "%", true);
 }
+function refrescarTodo() { refrescarCabecera(); refrescarKPIs(); refrescarComparacion(); actualizarFuentes(); }
 
-function verFlujoActivo() {
-  estado.vistaDiff = null;
-  $("btn-ver-flujo").classList.add("oculto");
-  const esc = escenarioActivo();
-  if (esc.resultado) render.fijarFlujo(estado.grafo, esc.resultado.conteo, esc.resultado.stats.p95);
-  render.dibujar();
+/* ==================== pestañas y modos ==================== */
+document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => {
+  estado.tab = b.dataset.tab; fijarModo(null);
+  document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("activo", x === b));
+  for (const t of ["atractores", "od", "barreras", "red"]) $("tab-" + t).classList.toggle("oculto", t !== estado.tab);
+  if (estado.tab === "od") pintarOD();
+  avisoModo();
+}));
+function avisoModo() {
+  const av = $("aviso-modo");
+  mapa.cursor(estado.modoClic === "atractor" || estado.tab === "barreras" || estado.tab === "red" ? "crosshair" : "");
+  if (estado.modoClic === "atractor") { av.textContent = "Haz clic en el mapa para colocar el atractor"; av.classList.remove("oculto"); }
+  else if (estado.tab === "barreras") { av.textContent = "Clic en un tramo: bloquear / desbloquear (este escenario)"; av.classList.remove("oculto"); }
+  else if (estado.tab === "red") { av.textContent = "Clic en un tramo: eliminar / restaurar de la red (todo el proyecto)"; av.classList.remove("oculto"); }
+  else av.classList.add("oculto");
 }
+function fijarModo(m) { estado.modoClic = m; avisoModo(); }
+$("btn-add-atr").onclick = () => {
+  if (!estado.grafo) { log("Primero descarga los datos de una zona (o carga el caso validado).", true); return; }
+  fijarModo(estado.modoClic === "atractor" ? null : "atractor");
+};
 
-function lineasMetadatos() {
-  const esc = escenarioActivo();
-  const p = esc.resultado.params, s = esc.resultado.stats;
-  return [
-    `${esc.nombre.toUpperCase()} — ${(estado.ciudad?.nombre || "").split(",")[0].toUpperCase()}`,
-    `SEMILLA: ${p.semilla}  PEATONES: ${p.agentes}  VARIABILIDAD: ${Math.round(p.ruido * 100)}%  GRUPOS: ${p.cohortes}`,
-    `MODELO: PROXY OD (EXPLORATORIO)  OSM: ${estado.capas.fechaOSM}  BARRERAS: ${esc.barreras.length}`,
-    `FLUJO MAX: ${s.max}  TIEMPO MEDIO: ${s.tiempoMedioMin.toFixed(1)} MIN  ACCESIBILIDAD 10': ${esc.resultado.acc.toFixed(0)}%`,
-  ];
-}
+/* ==================== escenarios / vistas ==================== */
+$("btn-duplicar").onclick = () => {
+  if (!estado.escenarios.length) return;
+  if (estado.escenarios.length >= 2) { log("Se manejan 2 escenarios (base y propuesto).", true); return; }
+  estado.escenarios.push(nuevoEscenario("Escenario 02 — propuesto", escActivo()));
+  estado.activo = 1; pintarLista(); pintarBarreras(); refrescarTodo(); guardarProyecto();
+  log("Escenario 02 creado como copia. Modifícalo (p. ej. bloquea una calle en Barreras) y corre la simulación para comparar.");
+};
+$("btn-cambiar-esc").onclick = () => {
+  if (estado.escenarios.length < 2) { log("Solo existe un escenario. Usa «Duplicar como propuesto»."); return; }
+  estado.activo = 1 - estado.activo; estado.vistaDiff = false;
+  pintarLista(); pintarBarreras(); refrescarTodo();
+};
+$("btn-ver-diff").onclick = () => { estado.vistaDiff = !estado.vistaDiff; refrescarTodo(); };
 
-function actualizarMetabox() {
-  $("metabox").textContent = lineasMetadatos().join("\n");
-  $("metabox").classList.remove("oculto");
-}
+/* ==================== estilo de base y tema ==================== */
+$("estilo-base").onchange = (ev) => { estado.estilo = ev.target.value; mapa.setEstilo(estado.estilo); guardarProyecto(); };
+$("btn-tema").onclick = () => {
+  estado.claro = !estado.claro;
+  document.body.classList.toggle("claro", estado.claro);
+  $("btn-tema").textContent = estado.claro ? "☾ Oscuro" : "☀ Claro";
+  mapa.setTema(estado.claro);
+  guardarProyecto();
+  log(estado.claro ? "Tema claro activado." : "Tema oscuro activado.");
+};
 
-// ---------- exportación ----------
-function descargarArchivo(contenido, nombre, tipo) {
-  const blob = contenido instanceof Blob ? contenido : new Blob([contenido], { type: tipo });
+/* ==================== exportación / ayuda ==================== */
+$("btn-export-png").onclick = () => {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = nombre;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function exportarPNG() {
-  const esc = escenarioActivo();
-  if (!esc.resultado) { log("Corre la simulación antes de exportar.", true); return; }
-  render.exportarPNG(lineasMetadatos(), `urbanflow_${esc.id}_${esc.resultado.fecha}.png`);
-  log("Lámina exportada.");
-}
-
-function exportarGeoJSON() {
-  const esc = escenarioActivo();
-  if (!esc.resultado) { log("Corre la simulación antes de exportar.", true); return; }
-  const feats = [];
-  for (let e = 0; e < estado.grafo.m; e++) {
-    if (esc.resultado.conteo[e] <= 0) continue;
-    const { a, b, nombre } = estado.grafo.aristas[e];
-    const c1 = estado.proyector.aLonLat(...estado.grafo.nodos[a]);
-    const c2 = estado.proyector.aLonLat(...estado.grafo.nodos[b]);
-    feats.push({
-      type: "Feature",
-      properties: { flujo: esc.resultado.conteo[e], nombre },
-      geometry: { type: "LineString", coordinates: [c1, c2] },
-    });
-  }
-  descargarArchivo(JSON.stringify({ type: "FeatureCollection",
-    name: "FlowDensity", features: feats }),
-    `urbanflow_flowdensity_${esc.id}.geojson`, "application/geo+json");
-  log(`GeoJSON exportado: ${feats.length} tramos con flujo (WGS84, listo para QGIS).`);
-}
-
-function exportarCSV() {
-  const filas = [["escenario", "semilla", "peatones", "variabilidad", "barreras",
-    "flujo_max", "flujo_prom", "tiempo_medio_min", "distancia_media_m",
-    "tramo_mas_cargado", "accesibilidad_10min_pct", "peatones_sin_ruta"]];
-  for (const esc of estado.escenarios) {
-    if (!esc.resultado) continue;
-    const s = esc.resultado.stats, p = esc.resultado.params;
-    filas.push([esc.nombre, p.semilla, p.agentes, p.ruido, esc.barreras.length,
-      s.max, s.flujoProm.toFixed(2), s.tiempoMedioMin.toFixed(2), Math.round(s.distMediaM),
-      (s.tramoTop?.nombre || "").replace(/[,;]/g, " "), esc.resultado.acc.toFixed(1), s.sinRuta]);
-  }
-  descargarArchivo(filas.map((f) => f.join(";")).join("\n"),
-    "urbanflow_indicadores.csv", "text/csv");
-  log("CSV de indicadores exportado (" + (filas.length - 1) + " escenarios).");
-}
-
-function exportarJSON() {
-  const esc = escenarioActivo();
-  const objeto = {
-    proyecto: $("proyecto-nombre").value,
-    objetivo: estado.objetivo,
-    ciudad: estado.ciudad.nombre,
-    bbox_SWNE: [estado.bbox.s, estado.bbox.w, estado.bbox.n, estado.bbox.e],
-    fecha_osm: estado.capas?.fechaOSM,
-    atribucion: "© OpenStreetMap contributors (ODbL)",
-    nivel_modelo: "exploratorio (proxy OD, sin calibrar con conteos)",
-    escenario: esc.nombre,
-    atractores: esc.atractores.filter((a) => a.activo)
-      .map(({ nombre, tipo, rol, peso, lon, lat }) => ({ nombre, tipo, rol, peso, lon, lat })),
-    barreras: esc.barreras.map((b) => b.nombre || "tramo sin nombre"),
-    motor: { ruta: "A (proxy OD, shortest+noise)", ...leerParams() },
-    resultados: esc.resultado ? { ...esc.resultado.stats, accesibilidad_10min: esc.resultado.acc } : null,
-    generado: new Date().toISOString(),
-    herramienta: "UrbanFlow v0.2",
-  };
-  descargarArchivo(JSON.stringify(objeto, null, 2),
-    `urbanflow_parametros_${esc.id}.json`, "application/json");
-  log("Hoja de parámetros exportada (reproducible).");
-}
-
-// ---------- guardar / reabrir proyecto ----------
-function guardarProyecto() {
-  if (!estado.ciudad) { log("Nada que guardar todavía: elige una ciudad primero.", true); return; }
+  a.download = "urbanflow-" + (estado.escenarios.length ? escActivo().nombre.replace(/\s+/g, "-") : "mapa") + ".png";
+  a.href = mapa.pngDataUrl(); a.click();
+  log("Lámina PNG exportada (los rótulos de atractores, por ser HTML, no se incluyen en el PNG).");
+};
+$("btn-export-json").onclick = () => {
+  if (!estado.escenarios.length) return;
+  const esc = escActivo();
   const datos = {
-    nombre: $("proyecto-nombre").value,
-    objetivo: $("objetivo").value,
-    ciudad: estado.ciudad, esDemo: estado.esDemo, bbox: estado.bbox,
-    lado: $("lado").value,
-    params: leerParams(),
-    escenarios: estado.escenarios.map((e) => ({
-      id: e.id, nombre: e.nombre, atractores: e.atractores, barreras: e.barreras,
-    })),
-    guardado: new Date().toISOString(),
+    proyecto: $("proyecto-nombre").value, objetivo: $("objetivo").value,
+    ciudad: estado.ciudad, bbox: estado.bbox, lado: estado.lado, fechaOSM: estado.fechaOSM,
+    escenario: esc.nombre, params: leerParams(),
+    atractores: esc.atractores, barreras: [...esc.barreras].map((e) => claveArista(e)),
+    redQuitada: [...estado.redQuitada].map((e) => claveArista(e)),
+    estiloBase: estado.estilo, nivelModelo: "exploratorio", fecha: new Date().toISOString(),
   };
-  localStorage.setItem(CLAVE_PROYECTO, JSON.stringify(datos));
-  log(`Proyecto "${datos.nombre}" guardado en este navegador.`);
+  const a = document.createElement("a");
+  a.download = "urbanflow-escenario.json";
+  a.href = "data:application/json;charset=utf-8," + encodeURIComponent(JSON.stringify(datos, null, 2));
+  a.click(); log("Hoja de parámetros JSON exportada.");
+};
+$("btn-ayuda-nav").onclick = () => log(
+  "Flujo: busca una ciudad → define el área y descarga sus datos OSM → revisa los atractores propuestos o añade los tuyos → corre la simulación → duplica el escenario, añade barreras y compara. Rotación: Ctrl+arrastrar; el norte vuelve con un clic en la brújula.");
+
+/* ==================== proyecto persistente (localStorage) ==================== */
+let restaurando = false;
+function guardarProyecto() {
+  if (restaurando) return;
+  try {
+    const datos = {
+      nombre: $("proyecto-nombre").value, objetivo: $("objetivo").value,
+      ciudad: estado.ciudad, esDemo: estado.esDemo, lado: estado.lado,
+      estilo: estado.estilo, claro: estado.claro, params: leerParams(),
+      escenarios: estado.escenarios.map((e) => ({
+        nombre: e.nombre,
+        atractores: e.atractores.map(({ ...a }) => a),
+        barreras: estado.grafo ? [...e.barreras].map((i) => claveArista(i)) : [],
+      })),
+      redQuitada: estado.grafo ? [...estado.redQuitada].map((i) => claveArista(i)) : [],
+      activo: estado.activo,
+    };
+    localStorage.setItem(CLAVE_PROYECTO, JSON.stringify(datos));
+  } catch { /* sin almacenamiento, sin drama */ }
+}
+let clavesPendientes = null; // {barrerasPorEsc:[[k...]], red:[k...]} a re-mapear tras construir el grafo
+function remapearGuardado() {
+  if (!clavesPendientes || !estado.grafo) return;
+  const porClave = new Map();
+  for (let e = 0; e < estado.grafo.m; e++) porClave.set(claveArista(e), e);
+  estado.redQuitada = new Set(clavesPendientes.red.map((k) => porClave.get(k)).filter((e) => e !== undefined));
+  clavesPendientes.barrerasPorEsc.forEach((claves, i) => {
+    if (estado.escenarios[i])
+      estado.escenarios[i].barreras = new Set(claves.map((k) => porClave.get(k)).filter((e) => e !== undefined));
+  });
+  clavesPendientes = null;
+}
+function cargarProyecto() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(CLAVE_PROYECTO)); } catch { }
+  if (!d || !d.ciudad) return false;
+  restaurando = true;
+  $("proyecto-nombre").value = d.nombre || "Proyecto UrbanFlow";
+  $("objetivo").value = d.objetivo || "flujos";
+  estado.lado = d.lado || 2000;
+  $("p-lado").value = estado.lado; $("v-lado").textContent = estado.lado;
+  if (d.params) {
+    $("p-agentes").value = d.params.agentes; $("p-ruido").value = d.params.ruido;
+    $("v-ruido").textContent = (+d.params.ruido).toFixed(2);
+    $("p-cohortes").value = d.params.cohortes; $("p-semilla").value = d.params.semilla;
+  }
+  if (d.claro) { estado.claro = true; document.body.classList.add("claro"); $("btn-tema").textContent = "☾ Oscuro"; }
+  if (d.estilo) { estado.estilo = d.estilo; $("estilo-base").value = d.estilo; }
+  estado.escenarios = (d.escenarios || []).map((e) =>
+    ({ nombre: e.nombre, atractores: e.atractores.map((a) => normalizarAtr(a)), barreras: new Set(), resultado: null }));
+  estado.activo = Math.min(d.activo || 0, Math.max(0, estado.escenarios.length - 1));
+  clavesPendientes = { red: d.redQuitada || [], barrerasPorEsc: (d.escenarios || []).map((e) => e.barreras || []) };
+  elegirCiudad(d.ciudad, !!d.esDemo);
+  restaurando = false;
+  log("Proyecto anterior restaurado. Descargando sus datos (la caché local lo hace rápido)…");
+  descargarDatos();
+  return true;
 }
 
-async function reabrirProyecto() {
-  const datos = JSON.parse(localStorage.getItem(CLAVE_PROYECTO) || "null");
-  if (!datos) return;
-  $("proyecto-nombre").value = datos.nombre;
-  $("objetivo").value = datos.objetivo;
-  $("lado").value = datos.lado;
-  const p = datos.params;
-  $("p-semilla").value = p.semilla; $("p-agentes").value = p.agentes;
-  $("p-ruido").value = p.ruido; $("p-cohortes").value = p.cohortes;
-  elegirCiudad(datos.ciudad, datos.esDemo);
-  estado.bbox = datos.bbox;
-  estado.escenarios = datos.escenarios.map((e) => ({ ...e, resultado: null }));
-  estado.activo = 0;
-  log("Proyecto reabierto — descargando datos (de la caché si están frescos)…");
-  await cargarDatos();
+/* ==================== arranque ==================== */
+$("p-ruido").oninput = (ev) => ($("v-ruido").textContent = (+ev.target.value).toFixed(2));
+$("p-lado").oninput = (ev) => { estado.lado = +ev.target.value; $("v-lado").textContent = estado.lado; };
+$("btn-buscar").onclick = ejecutarBusqueda;
+$("input-ciudad").addEventListener("keydown", (ev) => { if (ev.key === "Enter") ejecutarBusqueda(); });
+$("btn-descargar").onclick = descargarDatos;
+$("btn-demo").onclick = cargarDemo;
+$("btn-correr").onclick = correrSimulacion;
+$("proyecto-nombre").addEventListener("change", guardarProyecto);
+$("objetivo").addEventListener("change", guardarProyecto);
+
+iniciarPanelAtr();
+pintarLista(); pintarBarreras(); pintarRed();
+bloquearPaso(3); bloquearPaso(4); bloquearPaso(5);
+$("btn-correr").disabled = true;
+
+if (typeof maplibregl === "undefined") {
+  log("No se pudo cargar MapLibre desde el CDN. Revisa la conexión.", true);
+} else {
+  mapa.iniciar(); mapa.iniciarMinimapa();
+  refrescarTodo();
+  if (!cargarProyecto())
+    log("Bienvenido. Busca una ciudad (o carga el caso validado del Centro Histórico) para descargar sus calles reales de OSM.");
 }
-
-// ---------- eventos ----------
-$("btn-buscar").onclick = buscar;
-$("busqueda").addEventListener("keydown", (e) => { if (e.key === "Enter") buscar(); });
-$("btn-demo").onclick = () =>
-  elegirCiudad({ nombre: DEMO_GYE.nombre, lat: -2.1935, lon: -79.884 }, true);
-$("lado").oninput = actualizarBbox;
-$("objetivo").onchange = aplicarObjetivo;
-$("btn-datos").onclick = cargarDatos;
-$("sel-escenario").onchange = (e) => cambiarEscenario(parseInt(e.target.value, 10));
-$("btn-duplicar").onclick = duplicarEscenario;
-document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => cambiarTab(t.dataset.tab)));
-$("btn-agregar-atractor").onclick = () => {
-  estado.modoClic = estado.modoClic === "atractor" ? null : "atractor";
-  $("btn-agregar-atractor").classList.toggle("activo-modo", estado.modoClic === "atractor");
-  $("map").classList.toggle("modo-clic", estado.modoClic === "atractor");
-  if (estado.modoClic) log("Haz clic en el mapa donde quieras el nuevo punto.");
-};
-$("btn-proponer").onclick = () => {
-  escenarioActivo().atractores = proponerAtractores(estado.capas.pois);
-  pintarTabla(); refrescarAtractores();
-  log("Atractores propuestos de nuevo desde OSM — revisa roles y pesos.");
-};
-$("btn-simular").onclick = simular;
-$("btn-comparar").onclick = compararEscenarios;
-$("btn-ver-flujo").onclick = verFlujoActivo;
-$("btn-png").onclick = exportarPNG;
-$("btn-geojson").onclick = exportarGeoJSON;
-$("btn-csv").onclick = exportarCSV;
-$("btn-json").onclick = exportarJSON;
-$("btn-guardar").onclick = guardarProyecto;
-$("btn-reabrir").onclick = reabrirProyecto;
-$("btn-ayuda").onclick = () => $("dlg-ayuda").showModal();
-$("btn-zoom-mas").onclick = () => render.zoom(1);
-$("btn-zoom-menos").onclick = () => render.zoom(-1);
-$("btn-encuadrar").onclick = () => { if (render.modo === "lamina") render.encuadrar(); };
-$("proyecto-nombre").onchange = () =>
-  ($("chip-proyecto-nombre").textContent = $("proyecto-nombre").value);
-
-if (localStorage.getItem(CLAVE_PROYECTO)) $("btn-reabrir").classList.remove("oculto");

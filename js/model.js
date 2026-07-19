@@ -2,6 +2,7 @@
 // Traducción fiel de flow_model.py (PyQGIS) a JS, extendida con:
 //  - roles por atractor (origen | destino | ambos)
 //  - barreras (aristas bloqueadas por el usuario → costo infinito)
+//  - radio de influencia por atractor (limita el alcance de los pares OD)
 //  - estadísticas por agente (distancia y tiempo de recorrido a 1.4 m/s)
 //  - indicador de accesibilidad (% de la red alcanzable a X min desde los orígenes)
 // Reproducible: misma semilla → mismo resultado. NIVEL DEL MODELO: EXPLORATORIO.
@@ -49,11 +50,19 @@ export async function correrModelo({ grafo, atractores, params, barreras, onProg
   const elegirO = muestreador(idxOrigenes, pesos);
   const elegirD = muestreador(idxDestinos, pesos);
 
-  // 2) pares OD por agente (reproducible con la semilla)
+  // 2) pares OD por agente (reproducible con la semilla).
+  //    El radio de influencia limita el alcance: pares más largos que la suma de
+  //    radios de origen y destino se vuelven improbables (con tope de reintentos,
+  //    para no dejar agentes sin viaje cuando hay un único destino posible).
+  const cabeRadio = (o, d) => {
+    const A = amarres[o], B = amarres[d];
+    const alcance = (A.radio || 1e9) + (B.radio || 1e9);
+    return Math.hypot(A.x - B.x, A.y - B.y) <= alcance;
+  };
   const od = [];
   for (let i = 0; i < agentes; i++) {
     let o = elegirO(rng), d = elegirD(rng), intentos = 0;
-    while (d === o && intentos++ < 50) d = elegirD(rng);
+    while ((d === o || !cabeRadio(o, d)) && intentos++ < 40) { o = elegirO(rng); d = elegirD(rng); }
     if (d === o) continue;
     od.push([o, d]);
   }

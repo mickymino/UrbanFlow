@@ -3,232 +3,247 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>UrbanFlow — Computational Urbanism Platform</title>
+<title>UrbanFlow — simulador de flujos peatonales</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<header id="topbar">
-  <div class="logo">
-    <span class="logo-icono">◉</span>
-    <div><b>UrbanFlow</b><small>Computational Urbanism Platform</small></div>
-  </div>
-  <div id="chip-proyecto" class="chip-proyecto oculto">
-    <small>PROYECTO ACTIVO</small><span id="chip-proyecto-nombre"></span>
-  </div>
-  <div class="acciones">
-    <button id="btn-guardar" class="suave" title="Guarda el proyecto en este navegador para retomarlo después">💾 Guardar</button>
-    <button id="btn-ayuda" class="suave" title="Glosario y explicación del modelo">? Ayuda</button>
-  </div>
-</header>
+<div id="app">
+  <header id="navbar">
+    <div id="logo"><b>UrbanFlow</b><span>Computational Urbanism Framework</span></div>
+    <span class="chip-preview">Vista previa · datos de demostración</span>
+    <div id="nav-acciones">
+      <button class="btn" id="btn-tema" title="Cambiar tema de la interfaz">☀ Claro</button>
+      <button class="btn" id="btn-export-png">Exportar PNG</button>
+      <button class="btn" id="btn-export-json">Exportar escenario (JSON)</button>
+      <button class="btn" id="btn-ayuda-nav">Ayuda</button>
+    </div>
+  </header>
 
-<div id="cuerpo">
-  <!-- ============ panel izquierdo: pasos ============ -->
-  <aside id="pasos">
-    <section class="paso activo" id="paso-1">
-      <header><span class="n">1</span><div><h2>Proyecto</h2><small>Define qué quieres estudiar y dónde</small></div><span class="check oculto">✓</span></header>
-      <div class="contenido">
-        <label>Nombre del proyecto
-          <input id="proyecto-nombre" type="text" value="Mi estudio urbano">
-        </label>
-        <label>Objetivo del análisis
-          <select id="objetivo" title="El objetivo orienta qué indicadores mirar y qué flujo seguir">
-            <option value="flujos">Explorar flujos peatonales</option>
-            <option value="accesibilidad">Evaluar accesibilidad</option>
-            <option value="congestion">Detectar congestión</option>
-            <option value="propuesta">Comparar una propuesta urbana</option>
+  <div id="cuerpo">
+    <!-- ============ IZQUIERDA ============ -->
+    <aside id="col-izq">
+      <div class="tarjeta">
+        <div class="titulo-seccion">Proyecto activo</div>
+        <input id="proyecto-nombre" value="Centro Histórico de Guayaquil" style="width:100%;font-weight:600">
+        <div class="nota" style="margin-top:6px">Objetivo del análisis</div>
+        <select id="objetivo" style="width:100%;margin-top:4px">
+          <option value="flujos">Detectar concentración de flujos</option>
+          <option value="accesibilidad">Analizar accesibilidad peatonal</option>
+          <option value="propuesta">Comparar una propuesta urbana</option>
+          <option value="peatonal">Evaluar una calle peatonal</option>
+        </select>
+      </div>
+
+      <div class="tarjeta">
+        <div class="titulo-seccion">Ubicación</div>
+        <div id="caja-buscar">
+          <input id="input-ciudad" placeholder="Ej.: Guayaquil, Ecuador…">
+          <button class="btn" id="btn-buscar">Buscar</button>
+        </div>
+        <div id="res-ciudades"></div>
+        <div id="minimapa"></div>
+        <div id="ubicacion-actual">Sin ubicación — busca una ciudad o carga el caso validado</div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="titulo-seccion">Área de estudio</div>
+        <label class="nota">Lado del área: <b id="v-lado">2000</b> m
+          <span class="ayuda" data-tip="Zona cuadrada centrada en la ubicación elegida. Áreas de 1 a 3 km funcionan bien; más grandes tardan más en descargar y simular.">i</span></label>
+        <input type="range" id="p-lado" min="600" max="3400" step="100" value="2000" style="width:100%">
+        <button class="btn primario" id="btn-descargar" style="width:100%;margin-top:8px" disabled>⤓ Descargar datos de esta zona</button>
+        <button class="btn" id="btn-demo" style="width:100%;margin-top:6px">★ Cargar caso validado — Centro Histórico GYE</button>
+        <div id="estado-datos" class="nota" style="margin-top:6px"></div>
+        <div class="prog oculto" id="prog-datos"><div></div></div>
+      </div>
+
+      <div>
+        <div class="titulo-seccion">Escenario</div>
+        <div id="tabs">
+          <button data-tab="atractores" class="activo">Atractores</button>
+          <button data-tab="od">Oríg./Dest.</button>
+          <button data-tab="barreras">Barreras</button>
+          <button data-tab="red">Red</button>
+        </div>
+      </div>
+
+      <div id="tab-atractores">
+        <button class="btn" id="btn-add-atr" style="width:100%">＋ Añadir atractor (clic en el mapa)</button>
+        <div id="lista-atr" style="margin-top:6px"></div>
+      </div>
+
+      <div id="tab-od" class="oculto">
+        <p class="nota">Matriz origen-destino derivada de los roles y pesos actuales. <span class="ayuda" data-tip="Intensidad relativa = peso del origen × peso del destino, normalizada. Para fijar pares exactos, ajusta roles y pesos en la pestaña Atractores.">i</span></p>
+        <table class="od" id="tabla-od" style="margin-top:8px"></table>
+      </div>
+
+      <div id="tab-barreras" class="oculto">
+        <p class="nota">Haz clic sobre un tramo del mapa para <b>bloquearlo</b> en este escenario (cierre de vía, obra, barrera). Clic de nuevo para desbloquear.</p>
+        <div id="lista-barr" class="nota" style="margin-top:8px">Sin barreras.</div>
+      </div>
+
+      <div id="tab-red" class="oculto">
+        <p class="nota">Corrección de la red peatonal: haz clic sobre un tramo para <b>eliminarlo del proyecto</b> (conexión inexistente en la realidad). Afecta a todos los escenarios. Clic de nuevo para restaurar.</p>
+        <div id="lista-red" class="nota" style="margin-top:8px">Sin correcciones.</div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="titulo-seccion">Parámetros de simulación</div>
+        <div class="fila-param">
+          <label class="campo" style="margin:0"><span>Peatones simulados</span><span class="ayuda" data-tip="Cuántas rutas origen-destino se simulan. Más peatones = patrón más estable, cálculo más lento. Ej.: 2000 para un área de 2-3 km².">i</span></label>
+          <input id="p-agentes" type="number" min="100" max="20000" step="100" value="2048">
+        </div>
+        <div class="campo"><label>Variabilidad de rutas <span class="ayuda" data-tip="Cuánto se apartan los peatones de la ruta más corta. 0 = todos por la ruta óptima; 0,25 = variación realista; 0,5 = muy disperso.">i</span></label><span class="valor" id="v-ruido">0.25</span></div>
+        <input id="p-ruido" type="range" min="0" max="0.6" step="0.05" value="0.25" style="width:100%;margin:-4px 0 9px">
+        <div class="fila-param">
+          <label class="campo" style="margin:0"><span>Grupos de peatones</span><span class="ayuda" data-tip="La población se divide en grupos con criterios de ruta ligeramente distintos. Más grupos = más diversidad de recorridos.">i</span></label>
+          <input id="p-cohortes" type="number" min="1" max="24" value="8">
+        </div>
+        <div class="fila-param">
+          <label class="campo" style="margin:0"><span>Repetibilidad</span><span class="ayuda" data-tip="Número de semilla: la misma semilla con los mismos parámetros produce exactamente el mismo resultado. Cámbiala para explorar otra corrida.">i</span></label>
+          <input id="p-semilla" type="number" min="1" value="42">
+        </div>
+        <button class="btn btn-primario" id="btn-correr" style="width:100%;margin-top:4px">Correr simulación ▶</button>
+        <div class="progreso oculto" id="prog-sim"><div></div></div>
+        <div class="nota" id="estado-sim"></div>
+      </div>
+      <div class="tarjeta">
+        <div class="titulo-seccion">¿Cómo funciona?</div>
+        <p class="nota">La simulación usa un modelo <b>proxy origen-destino</b> sobre la red peatonal real: rutas mínimas con variabilidad por grupos. No es una simulación de agentes con colisiones. Los resultados muestran <b>flujo simulado potencial</b>, nunca conteos observados.</p>
+      </div>
+
+      <div>
+        <div class="titulo-seccion">Flujo de trabajo</div>
+        <div class="paso hecho" data-paso="1"><div class="num">✓</div><div><div class="t">Proyecto</div><div class="d">Objetivo y área de estudio</div></div></div>
+        <div class="paso hecho" data-paso="2"><div class="num">✓</div><div><div class="t">Datos</div><div class="d" id="resumen-datos">Cargando…</div></div></div>
+        <div class="paso activo" data-paso="3"><div class="num">3</div><div><div class="t">Escenario</div><div class="d">Atractores, orígenes, destinos, barreras y red</div></div></div>
+        <div class="paso" data-paso="4"><div class="num">4</div><div><div class="t">Simulación</div><div class="d">Peatones, variabilidad y repetibilidad</div></div></div>
+        <div class="paso bloqueado" data-paso="5"><div class="num">5</div><div><div class="t">Resultados</div><div class="d">Indicadores, comparación y exportación</div></div></div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="titulo-seccion">Estado del modelo</div>
+        <span id="badge-modelo">◈ Exploratorio</span>
+        <p class="nota" style="margin-top:8px">Los valores indican intensidad relativa de paso por tramo (pasos simulados), útiles para comparar escenarios entre sí. Para pasar a nivel <i>calibrado</i> se requieren conteos peatonales observados.</p>
+      </div>
+
+    </aside>
+
+    <!-- ============ CENTRO ============ -->
+    <main id="col-centro">
+      <div id="cab-escenario">
+        <h2 id="nombre-escenario">Escenario 01 — actual</h2>
+        <span id="meta-escenario">—</span>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn" id="btn-duplicar">Duplicar como propuesto</button>
+          <button class="btn" id="btn-cambiar-esc">Cambiar escenario</button>
+          <button class="btn oculto" id="btn-ver-diff">Ver diferencia en el mapa</button>
+        </div>
+      </div>
+
+      <div id="zona-mapa">
+        <div id="mapa"></div>
+
+        <div class="overlay" id="sel-estilo">
+          <span style="color:var(--tenue)">Mapa base</span>
+          <select id="estilo-base">
+            <option value="lienzo">Lienzo UrbanFlow</option>
+            <option value="osm">OSM estándar</option>
+            <option value="cartoDark">Oscuro (CARTO)</option>
+            <option value="cartoLight">Claro (CARTO)</option>
+            <option value="voyager">Voyager (CARTO)</option>
           </select>
-        </label>
-        <label>Ciudad
-          <div class="fila">
-            <input id="busqueda" type="text" placeholder="Buscar ciudad…" autocomplete="off">
-            <button id="btn-buscar" class="suave">Buscar</button>
+        </div>
+
+        <div class="overlay" id="leyenda">
+          <b style="font-size:12px">Intensidad de paso</b>
+          <div class="nota" style="font-size:10.5px">(pasos simulados / tramo)</div>
+          <div class="rampa"></div>
+          <div class="rango"><span id="rango-min">0</span><span id="rango-max">—</span></div>
+          <hr>
+          <div class="sim"><span class="punto" style="background:#5fbf6f"></span>Origen</div>
+          <div class="sim"><span class="punto" style="background:#e05252"></span>Destino</div>
+          <div class="sim"><span class="punto" style="background:#d4a530"></span>Origen y destino</div>
+          <div class="sim"><span style="width:16px;border-top:2px dashed #e05252"></span>Barrera</div>
+          <div class="sim"><span style="width:16px;border-top:2px solid rgba(214,197,171,.5)"></span>Red peatonal</div>
+        </div>
+
+        <div class="overlay" id="metadatos-mapa">
+          Red de simulación: datos sintéticos de demostración · Modelo proxy OD — nivel exploratorio
+        </div>
+
+        <div class="overlay" id="escala-grafica" aria-label="Escala gráfica">
+          <div id="escala-regla"></div>
+          <div id="escala-rotulos"></div>
+        </div>
+
+        <button class="overlay" id="norte" title="Norte — clic para reorientar el mapa">
+          <svg viewBox="0 0 36 44" width="30" height="37">
+            <polygon points="18,3 25,22 18,18 11,22" fill="#d4a530"/>
+            <polygon points="18,18 25,22 18,41 11,22" fill="currentColor" opacity="0.55"/>
+            <text x="18" y="33" text-anchor="middle" font-size="11" font-weight="700" fill="currentColor">N</text>
+          </svg>
+        </button>
+
+        <div class="overlay oculto" id="panel-atr">
+          <div class="cab"><b id="pa-titulo">Atractor</b><button class="icono" id="pa-cerrar" title="Cerrar (el marcador permanece)">✕</button></div>
+          <label>Nombre</label>
+          <input id="pa-nombre">
+          <label>Tipo <span class="ayuda" data-tip="Al cambiar el tipo, UrbanFlow propone automáticamente el peso típico de ese lugar. Puedes ajustarlo después.">i</span></label>
+          <select id="pa-tipo"></select>
+          <label>Jerarquía <span class="ayuda" data-tip="Alcance urbano del lugar: a qué escala de ciudad sirve. Define el radio de influencia sugerido.">i</span></label>
+          <select id="pa-jer"></select>
+          <label>Peso (nivel de atracción) <span class="ayuda" data-tip="Capacidad del lugar para atraer o generar flujo peatonal. 1–2 muy baja · 3–4 baja · 5–6 media · 7–8 alta · 9–10 muy alta.">i</span></label>
+          <input id="pa-peso" type="range" min="1" max="10" step="1">
+          <div id="pa-peso-desc">—</div>
+          <label>Radio de influencia <span class="ayuda" data-tip="Distancia hasta la que el lugar atrae viajes a pie. Los viajes que exceden el alcance combinado de origen y destino se vuelven improbables en la simulación.">i</span></label>
+          <div class="fila-radio"><input id="pa-radio" type="number" min="100" max="10000" step="50"><span class="nota">m</span></div>
+          <label>Horario (opcional)</label>
+          <input id="pa-horario" placeholder="p. ej. 08:00–20:00">
+          <label>Funciona como</label>
+          <select id="pa-rol">
+            <option value="origen">Origen</option>
+            <option value="destino">Destino</option>
+            <option value="ambos">Origen y destino</option>
+          </select>
+          <div class="acciones">
+            <button class="btn-rojo" id="pa-eliminar">Eliminar</button>
+            <button class="btn" id="pa-listo" style="flex:1">Listo</button>
           </div>
-        </label>
-        <ul id="resultados"></ul>
-        <button id="btn-demo" class="fantasma">★ Caso validado: Centro Histórico de Guayaquil</button>
-        <button id="btn-reabrir" class="fantasma oculto">↺ Reabrir último proyecto guardado</button>
-        <div id="ciudad-actual" class="pill oculto"></div>
+          <p class="nota" style="margin-top:10px">Describes el lugar; UrbanFlow lo convierte en parámetros: el peso define la probabilidad de origen/destino y el radio limita el alcance de los viajes.</p>
+        </div>
+
+        <div class="overlay oculto" id="tooltip-mapa"></div>
+        <div class="overlay oculto" id="aviso-modo"></div>
       </div>
-    </section>
 
-    <section class="paso bloqueado" id="paso-2">
-      <header><span class="n">2</span><div><h2>Datos</h2><small>Área de estudio y capas de OpenStreetMap</small></div><span class="check oculto">✓</span></header>
-      <div class="contenido">
-        <label>Lado del área: <b id="lado-val">1500</b> m
-          <input id="lado" type="range" min="500" max="3400" step="100" value="1500">
-        </label>
-        <div id="bbox-info" class="mono dim"></div>
-        <button id="btn-datos" class="primario">Descargar datos OSM</button>
-        <div class="progreso oculto" id="prog-datos"><div></div></div>
-        <div id="resumen-datos" class="resumen oculto"></div>
+    </main>
+
+    <!-- ============ DERECHA ============ -->
+    <aside id="col-der">
+      <div>
+        <div class="titulo-seccion">Resultados del análisis</div>
+      <div id="kpis">
+        <div class="kpi"><div class="e">Flujo máximo <span class="ayuda" data-tip="Mayor número de pasos simulados acumulados en un solo tramo de la red. Unidad honesta del modelo: pasos por tramo, no peatones reales por m².">i</span></div><div class="v" id="k-max">—</div><div class="u">pasos / tramo</div></div>
+        <div class="kpi"><div class="e">Flujo promedio</div><div class="v" id="k-prom">—</div><div class="u">pasos / tramo con flujo</div></div>
+        <div class="kpi"><div class="e">Tiempo medio de recorrido</div><div class="v" id="k-tiempo">—</div><div class="u">min (a 1,4 m/s)</div></div>
+        <div class="kpi"><div class="e">Distancia media</div><div class="v" id="k-dist">—</div><div class="u">m por ruta</div></div>
+        <div class="kpi"><div class="e">Tramo más cargado</div><div class="v txt" id="k-top">—</div></div>
+        <div class="kpi"><div class="e">Accesibilidad (10 min) <span class="ayuda" data-tip="Porcentaje de la red peatonal alcanzable en 10 minutos caminando desde los orígenes activos, con las barreras aplicadas.">i</span></div><div class="v" id="k-acc">—</div><div class="u">% de la red alcanzable</div></div>
       </div>
-    </section>
 
-    <section class="paso bloqueado" id="paso-3">
-      <header><span class="n">3</span><div><h2>Escenario</h2><small>Atractores, roles y barreras (panel derecho)</small></div><span class="check oculto">✓</span></header>
-      <div class="contenido"><p class="dim" id="estado-escenario">Configura los puntos y barreras en el panel derecho.</p></div>
-    </section>
+      <div class="tarjeta oculto" id="comparacion">
+        <div class="titulo-seccion">Comparación de escenarios</div>
+        <div id="comp-fila"></div>
+      </div>
 
-    <section class="paso bloqueado" id="paso-4">
-      <header><span class="n">4</span><div><h2>Simulación</h2><small>Parámetros del modelo (panel derecho)</small></div><span class="check oculto">✓</span></header>
-      <div class="contenido"><p class="dim" id="estado-simulacion">Aún no se ha corrido ninguna simulación.</p></div>
-    </section>
-
-    <section class="paso bloqueado" id="paso-5">
-      <header><span class="n">5</span><div><h2>Resultados</h2><small>Indicadores, comparación y exportación</small></div><span class="check oculto">✓</span></header>
-      <div class="contenido"><p class="dim">Los indicadores aparecen en la barra inferior al terminar la simulación.</p></div>
-    </section>
-
-    <div class="tarjeta-info">
-      <h3>¿Cómo funciona?</h3>
-      <p>La simulación usa un <b>modelo proxy origen-destino</b> sobre la red peatonal real
-      (rutas mínimas con variabilidad). No es un ABM con colisiones. Los resultados son
-      <b>aproximaciones exploratorias</b> para apoyar decisiones de diseño urbano — nunca
-      conteos observados.</p>
-    </div>
-
-    <div class="tarjeta-modelo">
-      <div class="fila-modelo"><span>ESTADO DEL MODELO</span><span class="badge">⚠ Exploratorio</span></div>
-      <small>Nivel de confianza del resultado</small>
-      <div class="escala-confianza"><i class="on"></i><i></i><i></i><i></i><i></i></div>
-      <div class="fila-modelo dim"><small>Exploratorio</small><small>Predictivo</small></div>
-    </div>
-
-    <div id="log" class="mono"></div>
-    <footer class="atrib">Datos: © OpenStreetMap contributors (ODbL) · Nominatim · CARTO</footer>
-  </aside>
-
-  <!-- ============ mapa central ============ -->
-  <main id="lienzo">
-    <canvas id="map"></canvas>
-    <div id="hint">Elige una ciudad o carga el caso validado de Guayaquil para empezar</div>
-    <div id="titulo-mapa" class="oculto">
-      <h3 id="titulo-mapa-texto">SIMULACIÓN DE FLUJOS PEATONALES</h3>
-      <p id="subtitulo-mapa"></p>
-    </div>
-    <div id="controles-mapa">
-      <button id="btn-zoom-mas" title="Acercar">＋</button>
-      <button id="btn-zoom-menos" title="Alejar">−</button>
-      <button id="btn-encuadrar" title="Encuadrar el área de estudio">⌂</button>
-    </div>
-    <div id="legend" class="oculto">
-      <h4>LEYENDA</h4>
-      <div class="leg-item"><span class="grad"></span></div>
-      <div class="leg-minmax"><i>flujo bajo</i><i>alto</i></div>
-      <div class="leg-item" id="leg-diff"><span class="linea azul"></span> disminuye (en comparación)</div>
-      <div class="leg-item"><span class="punto verde"></span> origen</div>
-      <div class="leg-item"><span class="punto rojo"></span> destino</div>
-      <div class="leg-item"><span class="punto oro"></span> origen y destino</div>
-      <div class="leg-item"><span class="linea roja"></span> barrera (tramo bloqueado)</div>
-      <div class="leg-item"><span class="linea tenue"></span> red caminable</div>
-      <div id="leg-meta" class="dim"></div>
-    </div>
-    <div id="metabox" class="mono oculto"></div>
-  </main>
-
-  <!-- ============ panel derecho: escenario ============ -->
-  <aside id="panel-escenario" class="oculto">
-    <h2>ESCENARIO</h2>
-    <div class="fila">
-      <select id="sel-escenario" title="Escenario que estás editando y simulando"></select>
-      <button id="btn-duplicar" class="suave" title="Crea una copia editable para probar una propuesta (peatonalizar, bloquear, mover pesos)">⧉ Proponer</button>
-    </div>
-
-    <div class="tabs">
-      <button class="tab activo" data-tab="atractores">Atractores</button>
-      <button class="tab" data-tab="barreras">Barreras</button>
-    </div>
-
-    <div id="tab-atractores">
-      <p class="dim">Cada punto tiene <b>rol</b> (origen / destino / ambos) y <b>nivel de atracción</b> 1–10
-        <span class="ayuda" title="El peso representa cuánta gente genera o atrae ese lugar. Es conocimiento local: corrígelo tú. Ej: un mercado popular = 9, un parque de barrio = 5.">ⓘ</span></p>
-      <button id="btn-agregar-atractor" class="fantasma">＋ Añadir con clic en el mapa</button>
-      <table id="tabla-atractores">
-        <thead><tr><th></th><th>Nombre</th><th>Rol</th><th>Atracción</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <button id="btn-proponer" class="fantasma">↻ Proponer de nuevo desde OSM</button>
-    </div>
-
-    <div id="tab-barreras" class="oculto">
-      <p class="dim">Haz <b>clic sobre una calle del mapa</b> para bloquear ese tramo (cerrar una vía,
-        marcar un cruce imposible). Vuelve a hacer clic para desbloquearlo.
-        <span class="ayuda" title="Las barreras excluyen el tramo de la red caminable: los peatones simulados lo evitarán. Útil para probar peatonalizaciones o corregir la red de OSM.">ⓘ</span></p>
-      <ul id="lista-barreras"><li class="dim">Sin barreras en este escenario.</li></ul>
-    </div>
-
-    <h3>PARÁMETROS DE SIMULACIÓN</h3>
-    <div class="grid2">
-      <label>Peatones simulados <span class="ayuda" title="Número de peatones virtuales. Más peatones = patrón más suave, cálculo algo más lento. 2048 es un buen punto de partida.">ⓘ</span>
-        <input id="p-agentes" type="number" value="2048" step="256" min="128"></label>
-      <label>Variabilidad de rutas <span class="ayuda" title="0 = todos toman la ruta más corta exacta; 0.25 = 25% de dispersión: rutas alternativas cercanas también reciben flujo (más realista).">ⓘ</span>
-        <input id="p-ruido" type="number" value="0.25" step="0.05" min="0" max="1"></label>
-      <label>Repetibilidad (semilla) <span class="ayuda" title="Con la misma semilla y parámetros el resultado es idéntico — clave para comparar escenarios y para reproducibilidad científica.">ⓘ</span>
-        <input id="p-semilla" type="number" value="42"></label>
-      <label>Grupos de peatones <span class="ayuda" title="Los peatones se reparten en grupos con distinta percepción de costos; cada grupo explora rutas ligeramente distintas.">ⓘ</span>
-        <input id="p-cohortes" type="number" value="8" min="1" max="16"></label>
-    </div>
-    <button id="btn-simular" class="primario">Correr simulación ▶</button>
-    <div class="progreso oculto" id="prog-sim"><div></div></div>
-    <div id="stats" class="mono dim"></div>
-  </aside>
+      <div id="log-zona"></div>
+      </div>
+    </aside>
+  </div>
 </div>
 
-<!-- ============ barra inferior: resultados ============ -->
-<footer id="barra-resultados" class="oculto">
-  <div class="kpis">
-    <div class="kpi"><small>Flujo máximo <span class="ayuda" title="Pasadas de peatones simulados por el tramo más usado.">ⓘ</span></small><b id="kpi-max">—</b><span>pasadas/tramo</span></div>
-    <div class="kpi"><small>Flujo promedio</small><b id="kpi-prom">—</b><span>pasadas/tramo</span></div>
-    <div class="kpi"><small>Tiempo medio de recorrido</small><b id="kpi-tiempo">—</b><span>min (a 1.4 m/s)</span></div>
-    <div class="kpi"><small>Distancia media</small><b id="kpi-dist">—</b><span>m</span></div>
-    <div class="kpi ancha"><small>Tramo más cargado</small><b id="kpi-tramo">—</b><span id="kpi-tramo-flujo"></span></div>
-    <div class="kpi"><small>Accesibilidad 10 min <span class="ayuda" title="Porcentaje de la red caminable alcanzable en 10 minutos a pie desde los orígenes activos.">ⓘ</span></small><b id="kpi-acc">—</b><span>de la red</span></div>
-  </div>
-  <div class="comparacion">
-    <div class="comp-sel">
-      <span>COMPARAR</span>
-      <select id="comp-a"></select>
-      <span>vs</span>
-      <select id="comp-b"></select>
-      <button id="btn-comparar" class="suave" title="Pinta en el mapa la diferencia de flujo: cálido = aumenta, azul = disminuye">Δ Ver diferencia</button>
-      <button id="btn-ver-flujo" class="suave oculto" title="Volver a la vista de flujo del escenario activo">Ver flujo</button>
-    </div>
-    <div id="comp-deltas" class="comp-deltas"></div>
-  </div>
-  <div class="exportar">
-    <span>EXPORTAR</span>
-    <button id="btn-png" class="suave">Lámina PNG</button>
-    <button id="btn-geojson" class="suave" title="Capa FlowDensity del escenario activo, lista para QGIS">GeoJSON</button>
-    <button id="btn-csv" class="suave" title="Indicadores de todos los escenarios simulados">CSV</button>
-    <button id="btn-json" class="suave" title="Hoja de parámetros reproducible">Parámetros</button>
-  </div>
-</footer>
-
-<dialog id="dlg-ayuda">
-  <h2>UrbanFlow — ayuda rápida</h2>
-  <h3>¿Qué modelo usa?</h3>
-  <p>Un <b>proxy origen-destino</b>: cada peatón simulado va de un origen a un destino por
-  rutas mínimas con variabilidad, sobre la red caminable real de OpenStreetMap. Está
-  respaldado por space syntax (la centralidad <i>Choice</i> correlaciona r=0.7–0.9 con
-  conteos peatonales reales), pero <b>no</b> es un ABM con colisiones ni está calibrado con
-  conteos de campo: el nivel del modelo es <b>exploratorio</b>. Úsalo para comparar
-  alternativas y formular hipótesis, no como predicción de peatones reales.</p>
-  <h3>Glosario</h3>
-  <ul>
-    <li><b>Atractor</b>: lugar que genera o recibe viajes (mercado, parque, estación). Su <b>atracción</b> (1–10) es conocimiento local tuyo.</li>
-    <li><b>Rol</b>: si el punto emite peatones (origen), los recibe (destino) o ambas cosas.</li>
-    <li><b>Barrera</b>: tramo de calle bloqueado — sirve para peatonalizar, cerrar vías o corregir errores de OSM.</li>
-    <li><b>Variabilidad de rutas</b>: dispersión en la elección de camino; evita que todos usen exactamente la misma ruta.</li>
-    <li><b>Semilla</b>: garantiza que la misma configuración dé siempre el mismo resultado (reproducibilidad).</li>
-    <li><b>Escenario</b>: una configuración completa (puntos + barreras). Compara "actual" vs "propuesto" con la misma semilla para aislar el efecto de tu intervención.</li>
-  </ul>
-  <h3>Flujo recomendado</h3>
-  <p>1 Define objetivo y ciudad → 2 descarga datos → 3 revisa atractores y roles → 4 corre
-  la simulación → 5 duplica el escenario, introduce tu propuesta (barreras/pesos) y
-  compara la diferencia.</p>
-  <form method="dialog"><button class="primario">Entendido</button></form>
-</dialog>
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>
