@@ -74,10 +74,10 @@ export function lamAbrir(){
   if(!$("lam-nota-txt").value)
     $("lam-nota-txt").value="Modelo proxy origen-destino sobre grafo caminable. Nivel exploratorio: "+
       "los valores expresan pasos simulados por tramo, no conteos reales de personas. "+
-      "Resultado reproducible con la semilla indicada.";
+      "Resultado reproducible con el valor de reproducibilidad indicado.";
   if(!$("lam-cred-txt").value)
     $("lam-cred-txt").value="UrbanFlow · Datos: OpenStreetMap"+(lamEstado().fechaOSM?" ("+lamEstado().fechaOSM+")":"")+
-      "\nParámetros: "+lamParams().agentes.toLocaleString("es-EC")+" peatones · semilla "+lamParams().semilla;
+      "\nParámetros: "+lamParams().agentes.toLocaleString("es-EC")+" viajes · reproducibilidad "+lamParams().semilla;
   lamKpisDisponibles(res);
   lamPintarItems();
   lamPintarKpiItems();

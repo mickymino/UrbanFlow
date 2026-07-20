@@ -232,7 +232,7 @@ export function madurez({ conect, atractores, stats, params, calibrado }) {
     { k: "Red conectada (≥95 % en un componente)", ok: conect.pctMayor >= 95 },
     { k: "Al menos 2 destinos activos", ok: atractores.filter((a) => a.activo && a.rol !== "origen").length >= 2 },
     { k: "Todos los viajes con ruta", ok: stats.sinRuta === 0 },
-    { k: "Muestra suficiente (≥1000 peatones)", ok: params.agentes >= 1000 },
+    { k: "Muestra suficiente (≥1000 viajes)", ok: params.agentes >= 1000 },
     { k: "Variabilidad de rutas activada", ok: params.ruido > 0 && params.cohortes > 1 },
     { k: "Calibrado con conteos observados", ok: !!calibrado },
   ];
