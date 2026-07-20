@@ -2,8 +2,7 @@
 
 Motor de análisis urbano computacional en el navegador: simulación de flujos
 peatonales de cualquier ciudad del mundo. Parte del **Computational Urbanism
-Framework (CUF)** de Miguel — extensión del ecosistema de skills de
-[Abhinav BWJ](https://github.com/Amanbh997).
+Framework (CUF)** de Miguel.
 
 **Demo pública:** https://mickymino.github.io/UrbanFlow/
 
