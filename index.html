@@ -50,7 +50,7 @@
       <div class="tarjeta">
         <div class="titulo-seccion">Área de estudio</div>
         <label class="nota">Lado del área: <b id="v-lado">2000</b> m
-          <span class="ayuda" data-tip="Zona cuadrada centrada en la ubicación elegida. Áreas de 1 a 3 km funcionan bien; más grandes tardan más en descargar y simular.">i</span></label>
+          <span class="ayuda" data-tip="Zona cuadrada centrada en la ubicación elegida. Áreas de 1 a 3 km funcionan bien; más grandes tardan más en descargar y simular.">?</span></label>
         <input type="range" id="p-lado" min="600" max="3400" step="100" value="2000" style="width:100%">
         <button class="btn primario" id="btn-descargar" style="width:100%;margin-top:8px" disabled>⤓ Descargar datos de esta zona</button>
         <button class="btn" id="btn-demo" style="width:100%;margin-top:6px">★ Cargar caso validado — Centro Histórico GYE</button>
@@ -73,7 +73,7 @@
       </div>
 
       <div id="tab-od" class="oculto">
-        <p class="nota">Matriz origen-destino derivada de los roles y pesos actuales. <span class="ayuda" data-tip="Intensidad relativa = peso del origen × peso del destino, normalizada. Para fijar pares exactos, ajusta roles y pesos en la pestaña Atractores.">i</span></p>
+        <p class="nota">Matriz origen-destino derivada de los roles y pesos actuales. <span class="ayuda" data-tip="Intensidad relativa = peso del origen × peso del destino, normalizada. Para fijar pares exactos, ajusta roles y pesos en la pestaña Atractores.">?</span></p>
         <table class="od" id="tabla-od" style="margin-top:8px"></table>
       </div>
 
@@ -189,14 +189,14 @@
           <div class="cab"><b id="pa-titulo">Atractor</b><button class="icono" id="pa-cerrar" title="Cerrar (el marcador permanece)">✕</button></div>
           <label>Nombre</label>
           <input id="pa-nombre">
-          <label>Tipo <span class="ayuda" data-tip="Al cambiar el tipo, UrbanFlow propone automáticamente el peso típico de ese lugar. Puedes ajustarlo después.">i</span></label>
+          <label>Tipo <span class="ayuda" data-tip="Al cambiar el tipo, UrbanFlow propone automáticamente el peso típico de ese lugar. Puedes ajustarlo después.">?</span></label>
           <select id="pa-tipo"></select>
-          <label>Jerarquía <span class="ayuda" data-tip="Alcance urbano del lugar: a qué escala de ciudad sirve. Define el radio de influencia sugerido.">i</span></label>
+          <label>Jerarquía <span class="ayuda" data-tip="Alcance urbano del lugar: a qué escala de ciudad sirve. Define el radio de influencia sugerido.">?</span></label>
           <select id="pa-jer"></select>
-          <label>Peso (nivel de atracción) <span class="ayuda" data-tip="Capacidad del lugar para atraer o generar flujo peatonal. 1–2 muy baja · 3–4 baja · 5–6 media · 7–8 alta · 9–10 muy alta.">i</span></label>
+          <label>Peso (nivel de atracción) <span class="ayuda" data-tip="Capacidad del lugar para atraer o generar flujo peatonal. 1–2 muy baja · 3–4 baja · 5–6 media · 7–8 alta · 9–10 muy alta.">?</span></label>
           <input id="pa-peso" type="range" min="1" max="10" step="1">
           <div id="pa-peso-desc">—</div>
-          <label>Radio de influencia <span class="ayuda" data-tip="Distancia hasta la que el lugar atrae viajes a pie. Los viajes que exceden el alcance combinado de origen y destino se vuelven improbables en la simulación.">i</span></label>
+          <label>Radio de influencia <span class="ayuda" data-tip="Distancia hasta la que el lugar atrae viajes a pie. Los viajes que exceden el alcance combinado de origen y destino se vuelven improbables en la simulación.">?</span></label>
           <div class="fila-radio"><input id="pa-radio" type="number" min="100" max="10000" step="50"><span class="nota">m</span></div>
           <label>Horario (opcional)</label>
           <input id="pa-horario" placeholder="p. ej. 08:00–20:00">
@@ -244,7 +244,7 @@
             <div id="pb-madurez">
               <div class="pb-mad-cab">
                 <span style="color:var(--tenue)">Madurez del análisis
-                  <span class="ayuda" data-tip="El modelo no está calibrado con conteos reales, por lo que no existe un porcentaje de confianza medible. Esto indica cuántas condiciones de un análisis sólido se cumplen.">i</span></span>
+                  <span class="ayuda" data-tip="El modelo no está calibrado con conteos reales, por lo que no existe un porcentaje de confianza medible. Esto indica cuántas condiciones de un análisis sólido se cumplen.">?</span></span>
                 <b id="pb-mad-pct">—</b>
               </div>
               <div class="pb-pista"><i id="pb-mad-barra" style="width:0;background:var(--ambar)"></i></div>
@@ -262,7 +262,7 @@
         <!-- ========== 3. COBERTURA PEATONAL ========== -->
         <div class="pb-card">
           <div class="pb-tit"><svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.6a6.4 6.4 0 100 12.8A6.4 6.4 0 008 1.6z"/><path d="M8 4.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z"/></svg>Cobertura peatonal
-            <span class="ayuda" data-tip="Porcentaje de la superficie del área de estudio que queda a menos de 100 m de un punto de la red alcanzable caminando desde los orígenes activos, en 5, 10 y 15 minutos a 1,4 m/s.">i</span></div>
+            <span class="ayuda" data-tip="Porcentaje de la superficie del área de estudio que queda a menos de 100 m de un punto de la red alcanzable caminando desde los orígenes activos, en 5, 10 y 15 minutos a 1,4 m/s.">?</span></div>
           <div id="pb-cobertura-vacio" class="pb-vacio">Disponible tras la simulación.</div>
           <div id="pb-cobertura" class="oculto"></div>
         </div>
