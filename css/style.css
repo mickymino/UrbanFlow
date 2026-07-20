@@ -57,9 +57,21 @@ input[type=range]{padding:0;accent-color:var(--ambar)}
 #badge-modelo{display:inline-flex;align-items:center;gap:6px;background:rgba(212,165,48,.12);color:var(--ambar);border:1px solid var(--ambar-osc);border-radius:99px;padding:3px 10px;font-size:12px;font-weight:600}
 
 .ayuda{position:relative;display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;border:1px solid var(--debil);color:var(--debil);font-size:10px;cursor:help;vertical-align:middle}
-.ayuda:hover{border-color:var(--ambar);color:var(--ambar)}
-.ayuda::after{content:attr(data-tip);position:absolute;bottom:150%;left:50%;transform:translateX(-50%);width:215px;background:var(--panel2);border:1px solid var(--borde);border-radius:8px;padding:8px 10px;font-size:11.5px;line-height:1.45;color:var(--texto);opacity:0;pointer-events:none;transition:opacity .12s;z-index:50;text-align:left;font-weight:400}
-.ayuda:hover::after{opacity:1}
+.ayuda:hover,.ayuda:focus-visible{border-color:var(--ambar);color:var(--ambar);outline:none}
+
+/* El tooltip vive en <body>, no dentro del icono: los paneles laterales tienen
+   overflow-y:auto y recortarían un ::after alto. Lo posiciona js/ayuda.js. */
+#tip-flotante{position:fixed;z-index:200;width:262px;max-width:calc(100vw - 20px);
+  background:var(--panel2);border:1px solid var(--borde);border-radius:8px;
+  padding:9px 11px;font-size:11.5px;line-height:1.45;color:var(--texto);
+  text-align:left;font-weight:400;box-shadow:0 6px 22px rgba(0,0,0,.35);
+  opacity:0;pointer-events:none;transition:opacity .12s;display:none}
+#tip-flotante.visible{opacity:1;display:block}
+#tip-flotante .tip-parrafo{margin:0 0 6px}
+#tip-flotante .tip-parrafo:last-child{margin-bottom:0}
+#tip-flotante .tip-item{margin:0 0 3px;padding-left:9px;color:var(--tenue)}
+#tip-flotante .tip-item:last-child{margin-bottom:0}
+#tip-flotante .tip-aviso{margin:7px 0 0;padding-top:7px;border-top:1px solid var(--borde);color:var(--ambar)}
 
 /* ubicación (barra derecha) */
 #caja-buscar{display:flex;gap:6px}

@@ -90,17 +90,17 @@
       <div class="tarjeta">
         <div class="titulo-seccion">Parámetros de simulación</div>
         <div class="fila-param">
-          <label class="campo" style="margin:0"><span>Peatones simulados</span><span class="ayuda" data-tip="Cuántas rutas origen-destino se simulan. Más peatones = patrón más estable, cálculo más lento. Ej.: 2000 para un área de 2-3 km².">i</span></label>
+          <label class="campo" style="margin:0"><span>Viajes simulados</span><span class="ayuda" data-tip="Número total de recorridos origen–destino utilizados durante la simulación. Un mayor número produce resultados más estables, pero no representa la cantidad real de peatones.&#10;&#10;• Menor cantidad = simulación rápida.&#10;• Mayor cantidad = resultados más estables.&#10;• Mantener el mismo valor al comparar escenarios.">?</span></label>
           <input id="p-agentes" type="number" min="100" max="20000" step="100" value="2048">
         </div>
-        <div class="campo"><label>Variabilidad de rutas <span class="ayuda" data-tip="Cuánto se apartan los peatones de la ruta más corta. 0 = todos por la ruta óptima; 0,25 = variación realista; 0,5 = muy disperso.">i</span></label><span class="valor" id="v-ruido">0.25</span></div>
+        <div class="campo"><label>Variabilidad de rutas <span class="ayuda" data-tip="Controla el grado de diversidad en la elección de rutas, simulando que distintos peatones pueden preferir recorridos diferentes por comodidad, seguridad, actividad urbana, sombra u otros factores.&#10;&#10;0 = Todos siguen la ruta más corta.&#10;0,25 = Comportamiento peatonal realista (recomendado).&#10;0,60 = Alta diversidad de recorridos.">?</span></label><span class="valor" id="v-ruido">0.25</span></div>
         <input id="p-ruido" type="range" min="0" max="0.6" step="0.05" value="0.25" style="width:100%;margin:-4px 0 9px">
         <div class="fila-param">
-          <label class="campo" style="margin:0"><span>Grupos de peatones</span><span class="ayuda" data-tip="La población se divide en grupos con criterios de ruta ligeramente distintos. Más grupos = más diversidad de recorridos.">i</span></label>
+          <label class="campo" style="margin:0"><span>Perfiles de elección de rutas</span><span class="ayuda" data-tip="Representa diferentes patrones de elección de recorrido. Cada perfil percibe la red de manera ligeramente distinta, generando una distribución más realista del flujo peatonal.&#10;&#10;1 = Todos utilizan prácticamente las mismas rutas.&#10;8–12 = Diversidad recomendada para la mayoría de simulaciones.&#10;24 = Máxima diversidad de elección de rutas.&#10;&#10;Importante: este parámetro NO representa tipos de peatones (turistas, estudiantes, residentes, etc.). Únicamente controla la diversidad de elección de rutas durante la simulación.">?</span></label>
           <input id="p-cohortes" type="number" min="1" max="24" value="8">
         </div>
         <div class="fila-param">
-          <label class="campo" style="margin:0"><span>Repetibilidad</span><span class="ayuda" data-tip="Número de semilla: la misma semilla con los mismos parámetros produce exactamente el mismo resultado. Cámbiala para explorar otra corrida.">i</span></label>
+          <label class="campo" style="margin:0"><span>Reproducibilidad</span><span class="ayuda" data-tip="Permite repetir exactamente la misma simulación. Si se mantienen este valor y el resto de parámetros, UrbanFlow generará siempre los mismos resultados.&#10;&#10;• Utilizar el mismo valor para reproducir una simulación.&#10;• Cambiar el valor genera una nueva secuencia aleatoria de viajes.&#10;• Es útil para comprobar si los resultados son consistentes o dependen del componente aleatorio de la simulación.">?</span></label>
           <input id="p-semilla" type="number" min="1" value="42">
         </div>
         <button class="btn btn-primario" id="btn-correr" style="width:100%;margin-top:4px">Correr simulación ▶</button>
@@ -389,5 +389,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
 <script type="module" src="js/app.js"></script>
+<script type="module" src="js/ayuda.js"></script>
 </body>
 </html>
