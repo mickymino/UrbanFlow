@@ -1,4 +1,4 @@
-// UrbanFlow v0.3 — orquestador (interfaz MapLibre sobre el pipeline OSM real).
+// UrbanFlow v0.4 — orquestador (interfaz MapLibre sobre el pipeline OSM real).
 // Flujo: 1 Proyecto → Ubicación (Nominatim) → Área de estudio → 2 Datos (Overpass
 // con caché + grafo caminable) → 3 Escenario (atractores con rol/peso/radio,
 // barreras, correcciones de red) → 4 Simulación (proxy OD) → 5 Resultados
