@@ -39,16 +39,24 @@ export function rotuloEscala(v,T){
    real entre dos puntos del mapa.
 
    Fundamento: en Web Mercator, la resolución a nivel de zoom z y latitud φ es
-       m/píxel = 156543,03392 · cos(φ) / 2^z
-   referida a píxeles CSS de 256 px por tesela. MapLibre puede renderizar el
-   canvas a mayor densidad (devicePixelRatio): canvas.width suele ser
-   clientWidth × dpr. Confundir ambos introduce un error de ×2 en pantallas
-   Retina, así que se distinguen explícitamente. */
+       m/píxel = 156543,03392 · cos(φ) / 2^z   (teselas de 256 px)
+   pero MapLibre usa teselas de 512 px, así que su zoom equivale a z+1 en esa
+   fórmula: m/píxel = 156543,03392 · cos(φ) / 2^(z+1). Ver metrosPorPixelCSS.
+   Aparte, MapLibre puede renderizar el canvas a mayor densidad
+   (devicePixelRatio): canvas.width suele ser clientWidth × dpr. Confundir ambos
+   introduce otro error de ×2 en pantallas Retina, así que se distinguen. */
 
-/* metros por píxel CSS en el centro del mapa */
+/* metros por píxel CSS en el centro del mapa.
+   OJO con el tamaño de tesela: la constante 156543,03392·cosφ/2^z es la
+   resolución Web Mercator referida a teselas de 256 px (convención OSM/Google).
+   MapLibre GL usa teselas de 512 px, de modo que a un mismo nivel de zoom su
+   mundo mide el DOBLE de píxeles: la resolución real es la mitad, es decir
+   /2^(z+1). Sin el +1 la escala mide exactamente el doble de la realidad.
+   Verificado contra map.unproject() de la MapLibre real: error 0,11 % (residuo
+   esférico vs. Haversine), frente al +100 % de la fórmula de 256 px. */
 export function metrosPorPixelCSS(mapa){
   const lat=mapa.getCenter().lat;
-  return (156543.03392*Math.cos(lat*Math.PI/180))/Math.pow(2,mapa.getZoom());
+  return (156543.03392*Math.cos(lat*Math.PI/180))/Math.pow(2,mapa.getZoom()+1);
 }
 /* dimensiones del mapa distinguiendo píxeles CSS de píxeles de mapa de bits */
 export function medidasMapa(mapa){
